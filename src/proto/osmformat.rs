@@ -1699,3 +1699,382 @@ impl ::buffa::Message for Relation {
         self.types.clear();
     }
 }
+/// The file header, from the OSMHeader blob. `osmosis_replication_base_url`
+/// is left out.
+#[derive(Clone, PartialEq, Default)]
+pub struct HeaderBlock {
+    /// Field 1: `bbox`
+    pub bbox: ::buffa::MessageField<HeaderBBox, ::buffa::Inline<HeaderBBox>>,
+    /// Field 4: `required_features`
+    pub required_features: ::buffa::alloc::vec::Vec<::buffa::alloc::string::String>,
+    /// Field 5: `optional_features`
+    pub optional_features: ::buffa::alloc::vec::Vec<::buffa::alloc::string::String>,
+    /// Field 16: `writingprogram`
+    pub writingprogram: ::core::option::Option<::buffa::alloc::string::String>,
+    /// Field 17: `source`
+    pub source: ::core::option::Option<::buffa::alloc::string::String>,
+    /// Field 32: `osmosis_replication_timestamp`
+    pub osmosis_replication_timestamp: ::core::option::Option<i64>,
+    /// Field 33: `osmosis_replication_sequence_number`
+    pub osmosis_replication_sequence_number: ::core::option::Option<i64>,
+}
+impl ::core::fmt::Debug for HeaderBlock {
+    fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+        f.debug_struct("HeaderBlock")
+            .field("bbox", &self.bbox)
+            .field("required_features", &self.required_features)
+            .field("optional_features", &self.optional_features)
+            .field("writingprogram", &self.writingprogram)
+            .field("source", &self.source)
+            .field("osmosis_replication_timestamp", &self.osmosis_replication_timestamp)
+            .field(
+                "osmosis_replication_sequence_number",
+                &self.osmosis_replication_sequence_number,
+            )
+            .finish()
+    }
+}
+impl HeaderBlock {
+    /// Protobuf type URL for this message, for use with `Any::pack` and
+    /// `Any::unpack_if`.
+    ///
+    /// Format: `type.googleapis.com/<fully.qualified.TypeName>`
+    pub const TYPE_URL: &'static str = "type.googleapis.com/OSMPBF.HeaderBlock";
+}
+impl HeaderBlock {
+    #[must_use = "with_* setters return `self` by value; assign or chain the result"]
+    #[inline]
+    ///Sets [`Self::writingprogram`] to `Some(value)`, consuming and returning `self`.
+    pub fn with_writingprogram(
+        mut self,
+        value: impl Into<::buffa::alloc::string::String>,
+    ) -> Self {
+        self.writingprogram = Some(value.into());
+        self
+    }
+    #[must_use = "with_* setters return `self` by value; assign or chain the result"]
+    #[inline]
+    ///Sets [`Self::source`] to `Some(value)`, consuming and returning `self`.
+    pub fn with_source(
+        mut self,
+        value: impl Into<::buffa::alloc::string::String>,
+    ) -> Self {
+        self.source = Some(value.into());
+        self
+    }
+    #[must_use = "with_* setters return `self` by value; assign or chain the result"]
+    #[inline]
+    ///Sets [`Self::osmosis_replication_timestamp`] to `Some(value)`, consuming and returning `self`.
+    pub fn with_osmosis_replication_timestamp(mut self, value: i64) -> Self {
+        self.osmosis_replication_timestamp = Some(value);
+        self
+    }
+    #[must_use = "with_* setters return `self` by value; assign or chain the result"]
+    #[inline]
+    ///Sets [`Self::osmosis_replication_sequence_number`] to `Some(value)`, consuming and returning `self`.
+    pub fn with_osmosis_replication_sequence_number(mut self, value: i64) -> Self {
+        self.osmosis_replication_sequence_number = Some(value);
+        self
+    }
+}
+::buffa::impl_default_instance!(HeaderBlock);
+impl ::buffa::MessageName for HeaderBlock {
+    const PACKAGE: &'static str = "OSMPBF";
+    const NAME: &'static str = "HeaderBlock";
+    const FULL_NAME: &'static str = "OSMPBF.HeaderBlock";
+    const TYPE_URL: &'static str = "type.googleapis.com/OSMPBF.HeaderBlock";
+}
+impl ::buffa::Message for HeaderBlock {
+    /// Returns the total encoded size in bytes.
+    ///
+    /// Accumulates in `u64` (which cannot overflow for in-memory
+    /// data) and saturates to `u32` at return, so a message whose
+    /// encoded size exceeds the 2 GiB protobuf limit yields a value
+    /// above [`::buffa::MAX_MESSAGE_BYTES`] that the encode entry
+    /// points reject, never a silently wrapped size.
+    #[allow(clippy::let_and_return)]
+    fn compute_size(&self, __cache: &mut ::buffa::SizeCache) -> u32 {
+        #[allow(unused_imports)]
+        use ::buffa::Enumeration as _;
+        let mut size = 0u64;
+        if self.bbox.is_set() {
+            let __slot = __cache.reserve();
+            let inner_size = self.bbox.compute_size(__cache);
+            __cache.set(__slot, inner_size);
+            size
+                += 1u64 + ::buffa::encoding::varint_len(inner_size as u64) as u64
+                    + inner_size as u64;
+        }
+        for v in &self.required_features {
+            size += 1u64 + ::buffa::types::string_encoded_len(v) as u64;
+        }
+        for v in &self.optional_features {
+            size += 1u64 + ::buffa::types::string_encoded_len(v) as u64;
+        }
+        if let Some(ref v) = self.writingprogram {
+            size += 2u64 + ::buffa::types::string_encoded_len(v) as u64;
+        }
+        if let Some(ref v) = self.source {
+            size += 2u64 + ::buffa::types::string_encoded_len(v) as u64;
+        }
+        if let Some(v) = self.osmosis_replication_timestamp {
+            size += 2u64 + ::buffa::types::int64_encoded_len(v) as u64;
+        }
+        if let Some(v) = self.osmosis_replication_sequence_number {
+            size += 2u64 + ::buffa::types::int64_encoded_len(v) as u64;
+        }
+        ::buffa::saturate_size(size)
+    }
+    fn write_to(
+        &self,
+        __cache: &mut ::buffa::SizeCache,
+        buf: &mut impl ::buffa::EncodeSink,
+    ) {
+        #[allow(unused_imports)]
+        use ::buffa::Enumeration as _;
+        if self.bbox.is_set() {
+            ::buffa::types::put_len_delimited_header(
+                1u32,
+                u64::from(__cache.consume_next()),
+                buf,
+            );
+            self.bbox.write_to(__cache, buf);
+        }
+        for v in &self.required_features {
+            ::buffa::types::put_string_field(4u32, v, buf);
+        }
+        for v in &self.optional_features {
+            ::buffa::types::put_string_field(5u32, v, buf);
+        }
+        if let Some(ref v) = self.writingprogram {
+            ::buffa::types::put_string_field(16u32, v, buf);
+        }
+        if let Some(ref v) = self.source {
+            ::buffa::types::put_string_field(17u32, v, buf);
+        }
+        if let Some(v) = self.osmosis_replication_timestamp {
+            ::buffa::types::put_int64_field(32u32, v, buf);
+        }
+        if let Some(v) = self.osmosis_replication_sequence_number {
+            ::buffa::types::put_int64_field(33u32, v, buf);
+        }
+    }
+    fn merge_field(
+        &mut self,
+        tag: ::buffa::encoding::Tag,
+        buf: &mut impl ::buffa::bytes::Buf,
+        ctx: ::buffa::DecodeContext<'_>,
+    ) -> ::core::result::Result<(), ::buffa::DecodeError> {
+        #[allow(unused_imports)]
+        use ::buffa::bytes::Buf as _;
+        #[allow(unused_imports)]
+        use ::buffa::Enumeration as _;
+        match tag.field_number() {
+            1u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::LengthDelimited,
+                )?;
+                ::buffa::Message::merge_length_delimited(
+                    self.bbox.get_or_insert_default(),
+                    buf,
+                    ctx,
+                )?;
+            }
+            4u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::LengthDelimited,
+                )?;
+                let __elem = ::buffa::types::decode_string(buf)?;
+                ctx.register_element_memory(
+                    ::buffa::__private::element_footprint(&__elem),
+                )?;
+                self.required_features.push(__elem);
+            }
+            5u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::LengthDelimited,
+                )?;
+                let __elem = ::buffa::types::decode_string(buf)?;
+                ctx.register_element_memory(
+                    ::buffa::__private::element_footprint(&__elem),
+                )?;
+                self.optional_features.push(__elem);
+            }
+            16u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::LengthDelimited,
+                )?;
+                ::buffa::types::merge_string(
+                    self
+                        .writingprogram
+                        .get_or_insert_with(::buffa::alloc::string::String::new),
+                    buf,
+                )?;
+            }
+            17u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::LengthDelimited,
+                )?;
+                ::buffa::types::merge_string(
+                    self.source.get_or_insert_with(::buffa::alloc::string::String::new),
+                    buf,
+                )?;
+            }
+            32u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::Varint,
+                )?;
+                self.osmosis_replication_timestamp = ::core::option::Option::Some(
+                    ::buffa::types::decode_int64(buf)?,
+                );
+            }
+            33u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::Varint,
+                )?;
+                self.osmosis_replication_sequence_number = ::core::option::Option::Some(
+                    ::buffa::types::decode_int64(buf)?,
+                );
+            }
+            _ => {
+                ::buffa::encoding::skip_field_depth(tag, buf, ctx.depth())?;
+            }
+        }
+        ::core::result::Result::Ok(())
+    }
+    fn clear(&mut self) {
+        self.bbox = ::buffa::MessageField::none();
+        self.required_features.clear();
+        self.optional_features.clear();
+        self.writingprogram = ::core::option::Option::None;
+        self.source = ::core::option::Option::None;
+        self.osmosis_replication_timestamp = ::core::option::Option::None;
+        self.osmosis_replication_sequence_number = ::core::option::Option::None;
+    }
+}
+/// Nanodegrees.
+#[derive(Clone, PartialEq, Default)]
+pub struct HeaderBBox {
+    /// Field 1: `left`
+    pub left: i64,
+    /// Field 2: `right`
+    pub right: i64,
+    /// Field 3: `top`
+    pub top: i64,
+    /// Field 4: `bottom`
+    pub bottom: i64,
+}
+impl ::core::fmt::Debug for HeaderBBox {
+    fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+        f.debug_struct("HeaderBBox")
+            .field("left", &self.left)
+            .field("right", &self.right)
+            .field("top", &self.top)
+            .field("bottom", &self.bottom)
+            .finish()
+    }
+}
+impl HeaderBBox {
+    /// Protobuf type URL for this message, for use with `Any::pack` and
+    /// `Any::unpack_if`.
+    ///
+    /// Format: `type.googleapis.com/<fully.qualified.TypeName>`
+    pub const TYPE_URL: &'static str = "type.googleapis.com/OSMPBF.HeaderBBox";
+}
+::buffa::impl_default_instance!(HeaderBBox);
+impl ::buffa::MessageName for HeaderBBox {
+    const PACKAGE: &'static str = "OSMPBF";
+    const NAME: &'static str = "HeaderBBox";
+    const FULL_NAME: &'static str = "OSMPBF.HeaderBBox";
+    const TYPE_URL: &'static str = "type.googleapis.com/OSMPBF.HeaderBBox";
+}
+impl ::buffa::Message for HeaderBBox {
+    /// Returns the total encoded size in bytes.
+    ///
+    /// Accumulates in `u64` (which cannot overflow for in-memory
+    /// data) and saturates to `u32` at return, so a message whose
+    /// encoded size exceeds the 2 GiB protobuf limit yields a value
+    /// above [`::buffa::MAX_MESSAGE_BYTES`] that the encode entry
+    /// points reject, never a silently wrapped size.
+    #[allow(clippy::let_and_return)]
+    fn compute_size(&self, _cache: &mut ::buffa::SizeCache) -> u32 {
+        #[allow(unused_imports)]
+        use ::buffa::Enumeration as _;
+        let mut size = 0u64;
+        size += 1u64 + ::buffa::types::sint64_encoded_len(self.left) as u64;
+        size += 1u64 + ::buffa::types::sint64_encoded_len(self.right) as u64;
+        size += 1u64 + ::buffa::types::sint64_encoded_len(self.top) as u64;
+        size += 1u64 + ::buffa::types::sint64_encoded_len(self.bottom) as u64;
+        ::buffa::saturate_size(size)
+    }
+    fn write_to(
+        &self,
+        _cache: &mut ::buffa::SizeCache,
+        buf: &mut impl ::buffa::EncodeSink,
+    ) {
+        #[allow(unused_imports)]
+        use ::buffa::Enumeration as _;
+        ::buffa::types::put_sint64_field(1u32, self.left, buf);
+        ::buffa::types::put_sint64_field(2u32, self.right, buf);
+        ::buffa::types::put_sint64_field(3u32, self.top, buf);
+        ::buffa::types::put_sint64_field(4u32, self.bottom, buf);
+    }
+    fn merge_field(
+        &mut self,
+        tag: ::buffa::encoding::Tag,
+        buf: &mut impl ::buffa::bytes::Buf,
+        ctx: ::buffa::DecodeContext<'_>,
+    ) -> ::core::result::Result<(), ::buffa::DecodeError> {
+        #[allow(unused_imports)]
+        use ::buffa::bytes::Buf as _;
+        #[allow(unused_imports)]
+        use ::buffa::Enumeration as _;
+        match tag.field_number() {
+            1u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::Varint,
+                )?;
+                self.left = ::buffa::types::decode_sint64(buf)?;
+            }
+            2u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::Varint,
+                )?;
+                self.right = ::buffa::types::decode_sint64(buf)?;
+            }
+            3u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::Varint,
+                )?;
+                self.top = ::buffa::types::decode_sint64(buf)?;
+            }
+            4u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::Varint,
+                )?;
+                self.bottom = ::buffa::types::decode_sint64(buf)?;
+            }
+            _ => {
+                ::buffa::encoding::skip_field_depth(tag, buf, ctx.depth())?;
+            }
+        }
+        ::core::result::Result::Ok(())
+    }
+    fn clear(&mut self) {
+        self.left = 0i64;
+        self.right = 0i64;
+        self.top = 0i64;
+        self.bottom = 0i64;
+    }
+}

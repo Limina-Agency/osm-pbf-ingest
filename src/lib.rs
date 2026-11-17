@@ -65,15 +65,13 @@
 //! # }
 //! ```
 //!
-//! # Public API includes `osmpbfreader` types
+//! # Decoding
 //!
-//! [`NodeTags`] is a re-export of `osmpbfreader::Tags`, the `tags` field of
-//! [`NormalizedNode`], [`NormalizedWay`] and [`NormalizedRelation`] has that
-//! type, and [`blob_index::read_blob_at`] returns `osmpbfreader::fileformat::Blob`,
-//! a `protobuf` 3 generated type. A major-version bump of `osmpbfreader` (or of
-//! its `protobuf` dependency) is therefore a breaking change for this crate.
-//! Blocks themselves are decoded with buffa views over a trimmed copy of the
-//! OSM schema (`proto/osmformat.proto`); that is internal.
+//! Blocks are decoded with buffa views over a trimmed copy of the OSM schema
+//! (`proto/`). The blob framing uses the same generated code, and
+//! [`blob_index::read_blob_at`] returns its [`blob_index::Blob`], so a buffa
+//! release that changes generated messages is a breaking change for this
+//! crate.
 //!
 //! # Where things live
 //!
@@ -124,8 +122,7 @@ pub use profile::IngestBuildProfile;
 pub use progress::{
     INGEST_CANCELLED, IngestStage, IngestStageMetric, SharedIngestProgress, SharedIngestSummary,
 };
-pub use tags::{TagLookup, TagsRef};
+pub use tags::{TagLookup, Tags, TagsIter, TagsRef};
 
-/// Re-exported so sinks in other crates can build `NormalizedNode` values
-/// without taking a direct dependency on the PBF reader.
-pub use osmpbfreader::Tags as NodeTags;
+/// The name [`Tags`] had while it was `osmpbfreader`'s type.
+pub use tags::Tags as NodeTags;

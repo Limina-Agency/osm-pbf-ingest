@@ -1,6 +1,6 @@
 // The parts of OSM PBF's osmformat.proto that osm-pbf-ingest reads,
 // with the upstream field numbers. Fields left out (Info, DenseInfo,
-// ChangeSet, HeaderBlock, the LocationsOnWays coordinates) are skipped on
+// ChangeSet, the LocationsOnWays coordinates) are skipped on
 // decode without being parsed. Upstream:
 // https://github.com/openstreetmap/OSM-binary/blob/master/osmpbf/osmformat.proto
 //
@@ -86,4 +86,24 @@ message Relation {
   repeated int32 roles_sid = 8 [packed = true];
   repeated sint64 memids = 9 [packed = true];
   repeated int32 types = 10 [packed = true];
+}
+
+// The file header, from the OSMHeader blob. `osmosis_replication_base_url`
+// is left out.
+message HeaderBlock {
+  optional HeaderBBox bbox = 1;
+  repeated string required_features = 4;
+  repeated string optional_features = 5;
+  optional string writingprogram = 16;
+  optional string source = 17;
+  optional int64 osmosis_replication_timestamp = 32;
+  optional int64 osmosis_replication_sequence_number = 33;
+}
+
+// Nanodegrees.
+message HeaderBBox {
+  required sint64 left = 1;
+  required sint64 right = 2;
+  required sint64 top = 3;
+  required sint64 bottom = 4;
 }

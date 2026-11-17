@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regenerate src/proto/ from proto/osmformat.proto. Needs `protoc` on PATH.
+# Regenerate src/proto/ from proto/*.proto. Needs `protoc` on PATH.
 set -euo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd)
 export RUSTC_WRAPPER=

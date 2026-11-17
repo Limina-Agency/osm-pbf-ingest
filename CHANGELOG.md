@@ -1,5 +1,28 @@
 # Changelog
 
+## Unreleased
+
+### No more `osmpbfreader` at runtime
+
+`osmpbfreader` and `protobuf` are now dev-dependencies only (the tests still
+check the decoder against `osmpbfreader`). That drops the unmaintained
+`smartstring` and, with it, `futures` 0.1, `futures-cpupool`, `par-map`,
+`pub-iterator-type`, `flat_map` and `self_cell` from the dependency tree.
+
+- Breaking: `Tags` is the crate's own type (`NodeTags` stays as another name
+  for it). Keys and values are `compact_str` strings, so ones up to 24 bytes
+  are stored inline as before; the pairs are still sorted by key, and a key
+  the file repeats resolves as before. `get` returns `Option<&str>`, so drop
+  a `.map(|value| value.as_str())` after it; `iter` yields `(&str, &str)`.
+  `insert` takes `&str` and returns nothing.
+- Breaking: `blob_index::read_blob_at` returns `blob_index::Blob`, generated
+  by buffa from `proto/fileformat.proto`, and its payload is the
+  `blob_index::BlobData` enum. A buffa release that changes generated
+  messages is now a breaking change for this crate.
+- The blob framing and file header are decoded with buffa, and pass 2 walks
+  the file's blobs with the crate's own reader. Unlike `protobuf`, buffa does
+  not reject a `BlobHeader` or `HeaderBBox` with a `required` field missing.
+
 ## 0.1.0 (2026-11-17)
 
 First release on crates.io, as `osm-pbf-ingest`. Until now the crate was

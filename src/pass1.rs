@@ -5,7 +5,6 @@
 //! locations into the shared store builder as they go; the collector gathers
 //! the relations and their way and parent memberships in file order.
 
-use osmpbfreader::Tags;
 use roaring::RoaringTreemap;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -26,7 +25,7 @@ use crate::progress::{
     INGEST_CANCELLED, IngestStage, SharedIngestProgress, read_fraction, reports_progress,
 };
 use crate::relation_index::{PackedRelationIndex, PackedRelationIndexBuilder};
-use crate::tags::{TagFilter, TagsRef};
+use crate::tags::{TagFilter, Tags, TagsRef};
 
 /// Settings for [`prepare_ingest_index_with_options`]. Every field left unset
 /// falls back to the build profile's default.
@@ -485,8 +484,7 @@ fn decode_block(
 
 impl Chunk {
     fn index_members(&mut self, relation: &NormalizedRelation) -> Result<(), String> {
-        let is_multipolygon =
-            relation.tags.get("type").map(|value| value.as_str()) == Some("multipolygon");
+        let is_multipolygon = relation.tags.get("type") == Some("multipolygon");
         for member in &relation.members {
             match member.member_type {
                 RelationMemberType::Way => {

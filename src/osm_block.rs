@@ -8,11 +8,10 @@
 //! `osmpbfreader`'s `groups` iterators produced, value for value; the tests at
 //! the bottom check that against `osmpbfreader` itself.
 
-use crate::tags::{Repeat, TagsRef};
+use crate::tags::{Repeat, Tags, TagsRef};
 use crate::{NormalizedRelation, NormalizedRelationMember, NormalizedWay, RelationMemberType};
 use buffa::MessageView as _;
 use buffa::RepeatedView;
-use osmpbfreader::Tags;
 use std::borrow::Cow;
 use std::cell::OnceCell;
 
@@ -27,7 +26,7 @@ use std::cell::OnceCell;
     unused_imports,
     unused_qualifications
 )]
-mod proto {
+pub(crate) mod proto {
     include!("proto/mod.rs");
 }
 
@@ -263,7 +262,7 @@ mod tests {
     //! The decoder against `osmpbfreader` on blocks shaped to hit edge cases.
 
     use super::*;
-    use crate::tags::TagsRef;
+    use crate::tags::{TagsRef, same_as_osmpbfreader};
     use osmpbfreader::osmformat::{
         DenseNodes, Node as PbfNode, PrimitiveBlock, PrimitiveGroup, Relation as PbfRelation,
         StringTable, Way as PbfWay, relation::MemberType,
@@ -408,7 +407,17 @@ mod tests {
                 .chain(groups::dense_nodes(expected_group, &expected))
                 .map(|node| (node.id.0, node.decimicro_lat, node.decimicro_lon, node.tags))
                 .collect::<Vec<_>>();
-            assert_eq!(found, wanted);
+            assert_eq!(found.len(), wanted.len());
+            for (found, wanted) in found.iter().zip(&wanted) {
+                assert_eq!((found.0, found.1, found.2), (wanted.0, wanted.1, wanted.2));
+                assert!(
+                    same_as_osmpbfreader(&found.3, &wanted.3),
+                    "node {}: {:?} != {:?}",
+                    found.0,
+                    found.3,
+                    wanted.3
+                );
+            }
 
             // Without tags the walk visits the same nodes and resolves nothing.
             let mut untagged = Vec::new();
@@ -440,7 +449,7 @@ mod tests {
                     normalized.is_closed,
                     node_ids.len() >= 4 && node_ids.first() == node_ids.last()
                 );
-                assert_eq!(normalized.tags, expected_way.tags);
+                assert!(same_as_osmpbfreader(&normalized.tags, &expected_way.tags));
             }
             assert_eq!(group.ways.len(), expected_group.ways.len());
 
@@ -451,7 +460,10 @@ mod tests {
                     .normalized_relation(relation, &mut pairs)
                     .expect("relation");
                 assert_eq!(normalized.relation_id, expected_relation.id.0);
-                assert_eq!(normalized.tags, expected_relation.tags);
+                assert!(same_as_osmpbfreader(
+                    &normalized.tags,
+                    &expected_relation.tags
+                ));
                 let members = expected_relation
                     .refs
                     .iter()

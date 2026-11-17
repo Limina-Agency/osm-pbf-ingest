@@ -2492,3 +2492,690 @@ impl ::buffa::HasMessageView for super::super::Relation {
     type View<'a> = RelationView<'a>;
     type ViewHandle = RelationOwnedView;
 }
+/// The file header, from the OSMHeader blob. `osmosis_replication_base_url`
+/// is left out.
+#[derive(Clone, Debug, Default)]
+pub struct HeaderBlockView<'a> {
+    /// Field 1: `bbox`
+    pub bbox: ::buffa::MessageFieldView<super::super::__buffa::view::HeaderBBoxView<'a>>,
+    /// Field 4: `required_features`
+    pub required_features: ::buffa::RepeatedView<'a, &'a str>,
+    /// Field 5: `optional_features`
+    pub optional_features: ::buffa::RepeatedView<'a, &'a str>,
+    /// Field 16: `writingprogram`
+    pub writingprogram: ::core::option::Option<&'a str>,
+    /// Field 17: `source`
+    pub source: ::core::option::Option<&'a str>,
+    /// Field 32: `osmosis_replication_timestamp`
+    pub osmosis_replication_timestamp: ::core::option::Option<i64>,
+    /// Field 33: `osmosis_replication_sequence_number`
+    pub osmosis_replication_sequence_number: ::core::option::Option<i64>,
+}
+impl<'a> ::buffa::MessageView<'a> for HeaderBlockView<'a> {
+    type Owned = super::super::HeaderBlock;
+    fn decode_view(buf: &'a [u8]) -> ::core::result::Result<Self, ::buffa::DecodeError> {
+        let __limit = ::core::cell::Cell::new(::buffa::DEFAULT_UNKNOWN_FIELD_LIMIT);
+        let __elem = ::core::cell::Cell::new(::buffa::DEFAULT_ELEMENT_MEMORY_LIMIT);
+        <Self as ::buffa::MessageView>::decode_view_ctx(
+            buf,
+            ::buffa::DecodeContext::new(::buffa::RECURSION_LIMIT, &__limit)
+                .with_element_memory(&__elem),
+        )
+    }
+    fn decode_view_with_ctx(
+        buf: &'a [u8],
+        ctx: ::buffa::DecodeContext<'_>,
+    ) -> ::core::result::Result<Self, ::buffa::DecodeError> {
+        <Self as ::buffa::MessageView>::decode_view_ctx(buf, ctx)
+    }
+    #[inline]
+    fn merge_view_field(
+        &mut self,
+        tag: ::buffa::encoding::Tag,
+        cur: &'a [u8],
+        _before_tag: &'a [u8],
+        ctx: ::buffa::DecodeContext<'_>,
+    ) -> ::core::result::Result<&'a [u8], ::buffa::DecodeError> {
+        let _ = ctx;
+        #[allow(unused_variables)]
+        let view = self;
+        let mut cur = cur;
+        match tag.field_number() {
+            1u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::LengthDelimited,
+                )?;
+                let __sub_ctx = ctx.descend()?;
+                let sub = ::buffa::types::borrow_bytes(&mut cur)?;
+                match view.bbox.as_mut() {
+                    Some(existing) => {
+                        ::buffa::MessageView::merge_into_view(existing, sub, __sub_ctx)?
+                    }
+                    None => {
+                        view.bbox = ::buffa::MessageFieldView::set(
+                            <super::super::__buffa::view::HeaderBBoxView as ::buffa::MessageView>::decode_view_ctx(
+                                sub,
+                                __sub_ctx,
+                            )?,
+                        );
+                    }
+                }
+            }
+            16u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::LengthDelimited,
+                )?;
+                view.writingprogram = Some(::buffa::types::borrow_str(&mut cur)?);
+            }
+            17u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::LengthDelimited,
+                )?;
+                view.source = Some(::buffa::types::borrow_str(&mut cur)?);
+            }
+            32u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::Varint,
+                )?;
+                view.osmosis_replication_timestamp = Some(
+                    ::buffa::types::decode_int64(&mut cur)?,
+                );
+            }
+            33u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::Varint,
+                )?;
+                view.osmosis_replication_sequence_number = Some(
+                    ::buffa::types::decode_int64(&mut cur)?,
+                );
+            }
+            4u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::LengthDelimited,
+                )?;
+                let __elem = ::buffa::types::borrow_str(&mut cur)?;
+                ctx.register_element_memory(
+                    ::buffa::__private::element_footprint(&__elem),
+                )?;
+                view.required_features.push(__elem);
+            }
+            5u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::LengthDelimited,
+                )?;
+                let __elem = ::buffa::types::borrow_str(&mut cur)?;
+                ctx.register_element_memory(
+                    ::buffa::__private::element_footprint(&__elem),
+                )?;
+                view.optional_features.push(__elem);
+            }
+            _ => {
+                ::buffa::encoding::skip_field_depth(tag, &mut cur, ctx.depth())?;
+            }
+        }
+        ::core::result::Result::Ok(cur)
+    }
+    fn to_owned_message(
+        &self,
+    ) -> ::core::result::Result<super::super::HeaderBlock, ::buffa::DecodeError> {
+        self.to_owned_from_source(None)
+    }
+    #[allow(clippy::useless_conversion, clippy::needless_update)]
+    fn to_owned_from_source(
+        &self,
+        __buffa_src: ::core::option::Option<&::buffa::bytes::Bytes>,
+    ) -> ::core::result::Result<super::super::HeaderBlock, ::buffa::DecodeError> {
+        #[allow(unused_imports)]
+        use ::buffa::alloc::string::ToString as _;
+        let _ = __buffa_src;
+        ::core::result::Result::Ok(super::super::HeaderBlock {
+            bbox: match self.bbox.as_option() {
+                Some(v) => {
+                    ::buffa::MessageField::<
+                        super::super::HeaderBBox,
+                        ::buffa::Inline<super::super::HeaderBBox>,
+                    >::some(v.to_owned_from_source(__buffa_src)?)
+                }
+                None => ::buffa::MessageField::none(),
+            },
+            required_features: self
+                .required_features
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
+            optional_features: self
+                .optional_features
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
+            writingprogram: self.writingprogram.map(|s| s.to_string()),
+            source: self.source.map(|s| s.to_string()),
+            osmosis_replication_timestamp: self.osmosis_replication_timestamp,
+            osmosis_replication_sequence_number: self
+                .osmosis_replication_sequence_number,
+            ..::core::default::Default::default()
+        })
+    }
+}
+impl<'a> ::buffa::ViewEncode<'a> for HeaderBlockView<'a> {
+    #[allow(clippy::needless_borrow, clippy::let_and_return)]
+    fn compute_size(&self, __cache: &mut ::buffa::SizeCache) -> u32 {
+        #[allow(unused_imports)]
+        use ::buffa::Enumeration as _;
+        let mut size = 0u64;
+        if self.bbox.is_set() {
+            let __slot = __cache.reserve();
+            let inner_size = self.bbox.compute_size(__cache);
+            __cache.set(__slot, inner_size);
+            size
+                += 1u64 + ::buffa::encoding::varint_len(inner_size as u64) as u64
+                    + inner_size as u64;
+        }
+        for v in &self.required_features {
+            size += 1u64 + ::buffa::types::string_encoded_len(v) as u64;
+        }
+        for v in &self.optional_features {
+            size += 1u64 + ::buffa::types::string_encoded_len(v) as u64;
+        }
+        if let Some(ref v) = self.writingprogram {
+            size += 2u64 + ::buffa::types::string_encoded_len(v) as u64;
+        }
+        if let Some(ref v) = self.source {
+            size += 2u64 + ::buffa::types::string_encoded_len(v) as u64;
+        }
+        if let Some(v) = self.osmosis_replication_timestamp {
+            size += 2u64 + ::buffa::types::int64_encoded_len(v) as u64;
+        }
+        if let Some(v) = self.osmosis_replication_sequence_number {
+            size += 2u64 + ::buffa::types::int64_encoded_len(v) as u64;
+        }
+        ::buffa::saturate_size(size)
+    }
+    #[allow(clippy::needless_borrow)]
+    fn write_to(
+        &self,
+        __cache: &mut ::buffa::SizeCache,
+        buf: &mut impl ::buffa::EncodeSink,
+    ) {
+        #[allow(unused_imports)]
+        use ::buffa::Enumeration as _;
+        if self.bbox.is_set() {
+            ::buffa::types::put_len_delimited_header(
+                1u32,
+                u64::from(__cache.consume_next()),
+                buf,
+            );
+            self.bbox.write_to(__cache, buf);
+        }
+        for v in &self.required_features {
+            ::buffa::types::put_string_field(4u32, v, buf);
+        }
+        for v in &self.optional_features {
+            ::buffa::types::put_string_field(5u32, v, buf);
+        }
+        if let Some(ref v) = self.writingprogram {
+            ::buffa::types::put_string_field(16u32, v, buf);
+        }
+        if let Some(ref v) = self.source {
+            ::buffa::types::put_string_field(17u32, v, buf);
+        }
+        if let Some(v) = self.osmosis_replication_timestamp {
+            ::buffa::types::put_int64_field(32u32, v, buf);
+        }
+        if let Some(v) = self.osmosis_replication_sequence_number {
+            ::buffa::types::put_int64_field(33u32, v, buf);
+        }
+    }
+}
+impl<'a> ::buffa::MessageName for HeaderBlockView<'a> {
+    const PACKAGE: &'static str = "OSMPBF";
+    const NAME: &'static str = "HeaderBlock";
+    const FULL_NAME: &'static str = "OSMPBF.HeaderBlock";
+    const TYPE_URL: &'static str = "type.googleapis.com/OSMPBF.HeaderBlock";
+}
+::buffa::impl_default_view_instance!(HeaderBlockView);
+::buffa::impl_view_reborrow!(HeaderBlockView);
+/** Self-contained, `'static` owned view of a `HeaderBlock` message.
+
+ Wraps [`::buffa::OwnedView`]`<`[`HeaderBlockView`]`<'static>>`: the decoded view and the [`::buffa::bytes::Bytes`] buffer it borrows from travel together, so the handle is `'static` and `Send + Sync` — suitable for async handlers, spawned tasks, and anywhere a `'static` bound is required.
+
+ Field accessors return borrows tied to `&self`. Use [`Self::view`] to get the full [`HeaderBlockView`] when you need struct patterns, iteration helpers, or to pass the view to lifetime-parameterised code.*/
+#[derive(Clone, Debug)]
+pub struct HeaderBlockOwnedView(::buffa::OwnedView<HeaderBlockView<'static>>);
+impl HeaderBlockOwnedView {
+    /// Decode an owned view from a [`::buffa::bytes::Bytes`] buffer.
+    ///
+    /// The view borrows directly from the buffer's data; the buffer is
+    /// retained inside the returned handle.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`::buffa::DecodeError`] if the buffer contains invalid
+    /// protobuf data.
+    pub fn decode(
+        bytes: ::buffa::bytes::Bytes,
+    ) -> ::core::result::Result<Self, ::buffa::DecodeError> {
+        ::core::result::Result::Ok(
+            HeaderBlockOwnedView(::buffa::OwnedView::decode(bytes)?),
+        )
+    }
+    /// Decode with custom [`::buffa::DecodeOptions`] (recursion limit,
+    /// max message size).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`::buffa::DecodeError`] if the buffer is invalid or
+    /// exceeds the configured limits.
+    pub fn decode_with_options(
+        bytes: ::buffa::bytes::Bytes,
+        opts: &::buffa::DecodeOptions,
+    ) -> ::core::result::Result<Self, ::buffa::DecodeError> {
+        ::core::result::Result::Ok(
+            HeaderBlockOwnedView(::buffa::OwnedView::decode_with_options(bytes, opts)?),
+        )
+    }
+    /// Build from an owned message via an encode → decode round-trip.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`::buffa::DecodeError::MessageTooLarge`] if the
+    /// message's encoded size exceeds the 2 GiB protobuf limit, or
+    /// another [`::buffa::DecodeError`] if the re-encoded bytes are
+    /// somehow invalid (should not happen for well-formed messages).
+    pub fn from_owned(
+        msg: &super::super::HeaderBlock,
+    ) -> ::core::result::Result<Self, ::buffa::DecodeError> {
+        ::core::result::Result::Ok(
+            HeaderBlockOwnedView(::buffa::OwnedView::from_owned(msg)?),
+        )
+    }
+    /// Borrow the full [`HeaderBlockView`] with its lifetime tied to `&self`.
+    #[must_use]
+    pub fn view(&self) -> &HeaderBlockView<'_> {
+        self.0.reborrow()
+    }
+    /// Convert to the owned message type.
+    ///
+    /// Infallible: this type's constructors wire-decode their
+    /// buffer, and a view produced by wire decoding always
+    /// converts. Delegates to [`::buffa::OwnedView::to_owned_message`],
+    /// whose contract also governs handles converted from a raw
+    /// [`::buffa::OwnedView`].
+    #[must_use]
+    pub fn to_owned_message(&self) -> super::super::HeaderBlock {
+        self.0.to_owned_message()
+    }
+    /// The underlying bytes buffer.
+    #[must_use]
+    pub fn bytes(&self) -> &::buffa::bytes::Bytes {
+        self.0.bytes()
+    }
+    /// Consume the handle, returning the underlying bytes buffer.
+    #[must_use]
+    pub fn into_bytes(self) -> ::buffa::bytes::Bytes {
+        self.0.into_bytes()
+    }
+    /// Field 1: `bbox`
+    #[must_use]
+    pub fn bbox(
+        &self,
+    ) -> &::buffa::MessageFieldView<super::super::__buffa::view::HeaderBBoxView<'_>> {
+        &self.0.reborrow().bbox
+    }
+    /// Field 4: `required_features`
+    #[must_use]
+    pub fn required_features(&self) -> &::buffa::RepeatedView<'_, &'_ str> {
+        &self.0.reborrow().required_features
+    }
+    /// Field 5: `optional_features`
+    #[must_use]
+    pub fn optional_features(&self) -> &::buffa::RepeatedView<'_, &'_ str> {
+        &self.0.reborrow().optional_features
+    }
+    /// Field 16: `writingprogram`
+    #[must_use]
+    pub fn writingprogram(&self) -> ::core::option::Option<&'_ str> {
+        self.0.reborrow().writingprogram
+    }
+    /// Field 17: `source`
+    #[must_use]
+    pub fn source(&self) -> ::core::option::Option<&'_ str> {
+        self.0.reborrow().source
+    }
+    /// Field 32: `osmosis_replication_timestamp`
+    #[must_use]
+    pub fn osmosis_replication_timestamp(&self) -> ::core::option::Option<i64> {
+        self.0.reborrow().osmosis_replication_timestamp
+    }
+    /// Field 33: `osmosis_replication_sequence_number`
+    #[must_use]
+    pub fn osmosis_replication_sequence_number(&self) -> ::core::option::Option<i64> {
+        self.0.reborrow().osmosis_replication_sequence_number
+    }
+}
+impl ::core::convert::From<::buffa::OwnedView<HeaderBlockView<'static>>>
+for HeaderBlockOwnedView {
+    fn from(inner: ::buffa::OwnedView<HeaderBlockView<'static>>) -> Self {
+        HeaderBlockOwnedView(inner)
+    }
+}
+impl ::core::convert::From<HeaderBlockOwnedView>
+for ::buffa::OwnedView<HeaderBlockView<'static>> {
+    fn from(wrapper: HeaderBlockOwnedView) -> Self {
+        wrapper.0
+    }
+}
+impl ::core::convert::AsRef<::buffa::OwnedView<HeaderBlockView<'static>>>
+for HeaderBlockOwnedView {
+    fn as_ref(&self) -> &::buffa::OwnedView<HeaderBlockView<'static>> {
+        &self.0
+    }
+}
+impl ::buffa::HasMessageView for super::super::HeaderBlock {
+    type View<'a> = HeaderBlockView<'a>;
+    type ViewHandle = HeaderBlockOwnedView;
+}
+/// Nanodegrees.
+#[derive(Clone, Debug, Default)]
+pub struct HeaderBBoxView<'a> {
+    /// Field 1: `left`
+    pub left: i64,
+    /// Field 2: `right`
+    pub right: i64,
+    /// Field 3: `top`
+    pub top: i64,
+    /// Field 4: `bottom`
+    pub bottom: i64,
+    #[doc(hidden)]
+    pub __buffa_required_seen_0: u64,
+    #[doc(hidden)]
+    pub __buffa_phantom: ::core::marker::PhantomData<&'a ()>,
+}
+impl<'a> HeaderBBoxView<'a> {
+    /**Whether required field `left` was present on the wire.
+
+Distinguishes a field that was absent from one explicitly encoded with its default value (required scalar fields are stored as bare, non-`Option` types, so the value alone cannot tell the two apart). Presence is recorded only by the wire decoder: a default or hand-built view reports `false`. Encoding is unaffected — required fields are always written.*/
+    #[must_use]
+    #[inline]
+    pub const fn has_left(&self) -> bool {
+        self.__buffa_required_seen_0 & 1u64 != 0
+    }
+    /**Whether required field `right` was present on the wire.
+
+Distinguishes a field that was absent from one explicitly encoded with its default value (required scalar fields are stored as bare, non-`Option` types, so the value alone cannot tell the two apart). Presence is recorded only by the wire decoder: a default or hand-built view reports `false`. Encoding is unaffected — required fields are always written.*/
+    #[must_use]
+    #[inline]
+    pub const fn has_right(&self) -> bool {
+        self.__buffa_required_seen_0 & 2u64 != 0
+    }
+    /**Whether required field `top` was present on the wire.
+
+Distinguishes a field that was absent from one explicitly encoded with its default value (required scalar fields are stored as bare, non-`Option` types, so the value alone cannot tell the two apart). Presence is recorded only by the wire decoder: a default or hand-built view reports `false`. Encoding is unaffected — required fields are always written.*/
+    #[must_use]
+    #[inline]
+    pub const fn has_top(&self) -> bool {
+        self.__buffa_required_seen_0 & 4u64 != 0
+    }
+    /**Whether required field `bottom` was present on the wire.
+
+Distinguishes a field that was absent from one explicitly encoded with its default value (required scalar fields are stored as bare, non-`Option` types, so the value alone cannot tell the two apart). Presence is recorded only by the wire decoder: a default or hand-built view reports `false`. Encoding is unaffected — required fields are always written.*/
+    #[must_use]
+    #[inline]
+    pub const fn has_bottom(&self) -> bool {
+        self.__buffa_required_seen_0 & 8u64 != 0
+    }
+}
+impl<'a> ::buffa::MessageView<'a> for HeaderBBoxView<'a> {
+    type Owned = super::super::HeaderBBox;
+    fn decode_view(buf: &'a [u8]) -> ::core::result::Result<Self, ::buffa::DecodeError> {
+        let __limit = ::core::cell::Cell::new(::buffa::DEFAULT_UNKNOWN_FIELD_LIMIT);
+        let __elem = ::core::cell::Cell::new(::buffa::DEFAULT_ELEMENT_MEMORY_LIMIT);
+        <Self as ::buffa::MessageView>::decode_view_ctx(
+            buf,
+            ::buffa::DecodeContext::new(::buffa::RECURSION_LIMIT, &__limit)
+                .with_element_memory(&__elem),
+        )
+    }
+    fn decode_view_with_ctx(
+        buf: &'a [u8],
+        ctx: ::buffa::DecodeContext<'_>,
+    ) -> ::core::result::Result<Self, ::buffa::DecodeError> {
+        <Self as ::buffa::MessageView>::decode_view_ctx(buf, ctx)
+    }
+    #[inline]
+    fn merge_view_field(
+        &mut self,
+        tag: ::buffa::encoding::Tag,
+        cur: &'a [u8],
+        _before_tag: &'a [u8],
+        ctx: ::buffa::DecodeContext<'_>,
+    ) -> ::core::result::Result<&'a [u8], ::buffa::DecodeError> {
+        let _ = ctx;
+        #[allow(unused_variables)]
+        let view = self;
+        let mut cur = cur;
+        match tag.field_number() {
+            1u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::Varint,
+                )?;
+                view.left = ::buffa::types::decode_sint64(&mut cur)?;
+                view.__buffa_required_seen_0 |= 1u64;
+            }
+            2u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::Varint,
+                )?;
+                view.right = ::buffa::types::decode_sint64(&mut cur)?;
+                view.__buffa_required_seen_0 |= 2u64;
+            }
+            3u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::Varint,
+                )?;
+                view.top = ::buffa::types::decode_sint64(&mut cur)?;
+                view.__buffa_required_seen_0 |= 4u64;
+            }
+            4u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::Varint,
+                )?;
+                view.bottom = ::buffa::types::decode_sint64(&mut cur)?;
+                view.__buffa_required_seen_0 |= 8u64;
+            }
+            _ => {
+                ::buffa::encoding::skip_field_depth(tag, &mut cur, ctx.depth())?;
+            }
+        }
+        ::core::result::Result::Ok(cur)
+    }
+    fn to_owned_message(
+        &self,
+    ) -> ::core::result::Result<super::super::HeaderBBox, ::buffa::DecodeError> {
+        self.to_owned_from_source(None)
+    }
+    #[allow(clippy::useless_conversion, clippy::needless_update)]
+    fn to_owned_from_source(
+        &self,
+        __buffa_src: ::core::option::Option<&::buffa::bytes::Bytes>,
+    ) -> ::core::result::Result<super::super::HeaderBBox, ::buffa::DecodeError> {
+        #[allow(unused_imports)]
+        use ::buffa::alloc::string::ToString as _;
+        let _ = __buffa_src;
+        ::core::result::Result::Ok(super::super::HeaderBBox {
+            left: self.left,
+            right: self.right,
+            top: self.top,
+            bottom: self.bottom,
+            ..::core::default::Default::default()
+        })
+    }
+}
+impl<'a> ::buffa::ViewEncode<'a> for HeaderBBoxView<'a> {
+    #[allow(clippy::needless_borrow, clippy::let_and_return)]
+    fn compute_size(&self, _cache: &mut ::buffa::SizeCache) -> u32 {
+        #[allow(unused_imports)]
+        use ::buffa::Enumeration as _;
+        let mut size = 0u64;
+        size += 1u64 + ::buffa::types::sint64_encoded_len(self.left) as u64;
+        size += 1u64 + ::buffa::types::sint64_encoded_len(self.right) as u64;
+        size += 1u64 + ::buffa::types::sint64_encoded_len(self.top) as u64;
+        size += 1u64 + ::buffa::types::sint64_encoded_len(self.bottom) as u64;
+        ::buffa::saturate_size(size)
+    }
+    #[allow(clippy::needless_borrow)]
+    fn write_to(
+        &self,
+        _cache: &mut ::buffa::SizeCache,
+        buf: &mut impl ::buffa::EncodeSink,
+    ) {
+        #[allow(unused_imports)]
+        use ::buffa::Enumeration as _;
+        ::buffa::types::put_sint64_field(1u32, self.left, buf);
+        ::buffa::types::put_sint64_field(2u32, self.right, buf);
+        ::buffa::types::put_sint64_field(3u32, self.top, buf);
+        ::buffa::types::put_sint64_field(4u32, self.bottom, buf);
+    }
+}
+impl<'a> ::buffa::MessageName for HeaderBBoxView<'a> {
+    const PACKAGE: &'static str = "OSMPBF";
+    const NAME: &'static str = "HeaderBBox";
+    const FULL_NAME: &'static str = "OSMPBF.HeaderBBox";
+    const TYPE_URL: &'static str = "type.googleapis.com/OSMPBF.HeaderBBox";
+}
+::buffa::impl_default_view_instance!(HeaderBBoxView);
+::buffa::impl_view_reborrow!(HeaderBBoxView);
+/** Self-contained, `'static` owned view of a `HeaderBBox` message.
+
+ Wraps [`::buffa::OwnedView`]`<`[`HeaderBBoxView`]`<'static>>`: the decoded view and the [`::buffa::bytes::Bytes`] buffer it borrows from travel together, so the handle is `'static` and `Send + Sync` — suitable for async handlers, spawned tasks, and anywhere a `'static` bound is required.
+
+ Field accessors return borrows tied to `&self`. Use [`Self::view`] to get the full [`HeaderBBoxView`] when you need struct patterns, iteration helpers, or to pass the view to lifetime-parameterised code.*/
+#[derive(Clone, Debug)]
+pub struct HeaderBBoxOwnedView(::buffa::OwnedView<HeaderBBoxView<'static>>);
+impl HeaderBBoxOwnedView {
+    /// Decode an owned view from a [`::buffa::bytes::Bytes`] buffer.
+    ///
+    /// The view borrows directly from the buffer's data; the buffer is
+    /// retained inside the returned handle.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`::buffa::DecodeError`] if the buffer contains invalid
+    /// protobuf data.
+    pub fn decode(
+        bytes: ::buffa::bytes::Bytes,
+    ) -> ::core::result::Result<Self, ::buffa::DecodeError> {
+        ::core::result::Result::Ok(
+            HeaderBBoxOwnedView(::buffa::OwnedView::decode(bytes)?),
+        )
+    }
+    /// Decode with custom [`::buffa::DecodeOptions`] (recursion limit,
+    /// max message size).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`::buffa::DecodeError`] if the buffer is invalid or
+    /// exceeds the configured limits.
+    pub fn decode_with_options(
+        bytes: ::buffa::bytes::Bytes,
+        opts: &::buffa::DecodeOptions,
+    ) -> ::core::result::Result<Self, ::buffa::DecodeError> {
+        ::core::result::Result::Ok(
+            HeaderBBoxOwnedView(::buffa::OwnedView::decode_with_options(bytes, opts)?),
+        )
+    }
+    /// Build from an owned message via an encode → decode round-trip.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`::buffa::DecodeError::MessageTooLarge`] if the
+    /// message's encoded size exceeds the 2 GiB protobuf limit, or
+    /// another [`::buffa::DecodeError`] if the re-encoded bytes are
+    /// somehow invalid (should not happen for well-formed messages).
+    pub fn from_owned(
+        msg: &super::super::HeaderBBox,
+    ) -> ::core::result::Result<Self, ::buffa::DecodeError> {
+        ::core::result::Result::Ok(
+            HeaderBBoxOwnedView(::buffa::OwnedView::from_owned(msg)?),
+        )
+    }
+    /// Borrow the full [`HeaderBBoxView`] with its lifetime tied to `&self`.
+    #[must_use]
+    pub fn view(&self) -> &HeaderBBoxView<'_> {
+        self.0.reborrow()
+    }
+    /// Convert to the owned message type.
+    ///
+    /// Infallible: this type's constructors wire-decode their
+    /// buffer, and a view produced by wire decoding always
+    /// converts. Delegates to [`::buffa::OwnedView::to_owned_message`],
+    /// whose contract also governs handles converted from a raw
+    /// [`::buffa::OwnedView`].
+    #[must_use]
+    pub fn to_owned_message(&self) -> super::super::HeaderBBox {
+        self.0.to_owned_message()
+    }
+    /// The underlying bytes buffer.
+    #[must_use]
+    pub fn bytes(&self) -> &::buffa::bytes::Bytes {
+        self.0.bytes()
+    }
+    /// Consume the handle, returning the underlying bytes buffer.
+    #[must_use]
+    pub fn into_bytes(self) -> ::buffa::bytes::Bytes {
+        self.0.into_bytes()
+    }
+    /// Field 1: `left`
+    #[must_use]
+    pub fn left(&self) -> i64 {
+        self.0.reborrow().left
+    }
+    /// Field 2: `right`
+    #[must_use]
+    pub fn right(&self) -> i64 {
+        self.0.reborrow().right
+    }
+    /// Field 3: `top`
+    #[must_use]
+    pub fn top(&self) -> i64 {
+        self.0.reborrow().top
+    }
+    /// Field 4: `bottom`
+    #[must_use]
+    pub fn bottom(&self) -> i64 {
+        self.0.reborrow().bottom
+    }
+}
+impl ::core::convert::From<::buffa::OwnedView<HeaderBBoxView<'static>>>
+for HeaderBBoxOwnedView {
+    fn from(inner: ::buffa::OwnedView<HeaderBBoxView<'static>>) -> Self {
+        HeaderBBoxOwnedView(inner)
+    }
+}
+impl ::core::convert::From<HeaderBBoxOwnedView>
+for ::buffa::OwnedView<HeaderBBoxView<'static>> {
+    fn from(wrapper: HeaderBBoxOwnedView) -> Self {
+        wrapper.0
+    }
+}
+impl ::core::convert::AsRef<::buffa::OwnedView<HeaderBBoxView<'static>>>
+for HeaderBBoxOwnedView {
+    fn as_ref(&self) -> &::buffa::OwnedView<HeaderBBoxView<'static>> {
+        &self.0
+    }
+}
+impl ::buffa::HasMessageView for super::super::HeaderBBox {
+    type View<'a> = HeaderBBoxView<'a>;
+    type ViewHandle = HeaderBBoxOwnedView;
+}
