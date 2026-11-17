@@ -1,0 +1,14 @@
+# Generates src/proto/ from proto/osmformat.proto. Not part of the published
+# crate; run it through scripts/gen-proto.sh. Keep the buffa-build version in
+# step with the crate's own buffa dependency: generated code targets that
+# runtime.
+[package]
+name = "gen-proto"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+buffa-build = "0.9.2"
+
+[workspace]

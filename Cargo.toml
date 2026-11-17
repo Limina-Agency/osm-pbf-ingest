@@ -1,0 +1,56 @@
+[package]
+name = "osm-pbf-ingest"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+repository = "https://github.com/Limina-Agency/osm-pbf-ingest"
+rust-version = "1.95"
+description = "OSM PBF ingest: blob index, parallel node/way/relation passes, node location store and normalized batches"
+readme = "README.md"
+keywords = ["openstreetmap", "osm", "pbf", "ingest", "gis"]
+categories = ["science::geo", "parser-implementations"]
+# Repository tooling, not part of the crate: tools/gen-proto regenerates
+# src/proto/, the rest is CI and contributor setup.
+exclude = [
+    "tools/",
+    "scripts/",
+    ".github/",
+    ".gitignore",
+    "rust-toolchain.toml",
+]
+
+[dependencies]
+# Decodes PrimitiveBlocks (src/proto/, generated from proto/osmformat.proto).
+# Keep the version in step with tools/gen-proto's buffa-build: the generated
+# code targets this runtime.
+buffa = "0.9.2"
+crossbeam-channel = "0.5"
+flate2 = { version = "1.1", features = ["zlib-rs"] }
+memmap2 = "0.9"
+osmpbfreader = "0.19"
+# Matches osmpbfreader's protobuf major so the generated fileformat types it
+# re-exports (`Blob`, `BlobHeader`, `HeaderBlock`) share our Message trait.
+protobuf = "3"
+rayon = "1.10"
+roaring = "0.11"
+rustc-hash = "2"
+serde = { version = "1.0", features = ["derive", "rc"] }
+serde_json = "1.0"
+tracing = "0.1"
+zerocopy = { version = "0.8", features = ["derive"] }
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints.rust]
+dead_code = "warn"
+unused_imports = "warn"
+unused_must_use = "warn"
+
+[lints.clippy]
+dbg_macro = "warn"
+todo = "warn"
+unimplemented = "warn"
+# The ingest passes thread many plain inputs through flat function signatures,
+# as in the meridian-routing workspace this crate came from.
+too_many_arguments = "allow"

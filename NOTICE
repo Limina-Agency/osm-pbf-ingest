@@ -1,0 +1,10 @@
+osm-pbf-ingest
+Copyright 2026 Limina
+
+This product includes software developed by Limina.
+
+proto/osmformat.proto, and the code generated from it in src/proto/, is
+derived from the OSM PBF schema in OSM-binary
+(https://github.com/openstreetmap/OSM-binary), Copyright (c) 2010 Scott A.
+Crosby, licensed under the MIT license. The full notice is in
+proto/osmformat.proto.

@@ -1,0 +1,89 @@
+// The parts of OSM PBF's osmformat.proto that osm-pbf-ingest reads,
+// with the upstream field numbers. Fields left out (Info, DenseInfo,
+// ChangeSet, HeaderBlock, the LocationsOnWays coordinates) are skipped on
+// decode without being parsed. Upstream:
+// https://github.com/openstreetmap/OSM-binary/blob/master/osmpbf/osmformat.proto
+//
+// `Relation.types` is `int32` rather than the upstream `MemberType` enum: a
+// closed proto2 enum moves out-of-range values into unknown fields, which
+// would shift every later member's type against its id and role. Ingest
+// drops members of an unknown type itself, as osmpbfreader does.
+//
+// Regenerate the Rust code with scripts/gen-proto.sh after editing.
+//
+// The upstream schema's license, which covers this file and the code
+// generated from it in src/proto/:
+//
+// Copyright (c) 2010 Scott A. Crosby. <scott@sacrosby.com>
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy of
+// this software and associated documentation files (the "Software"), to deal in
+// the Software without restriction, including without limitation the rights to
+// use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
+// of the Software, and to permit persons to whom the Software is furnished to do
+// so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in all
+// copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
+
+syntax = "proto2";
+
+package OSMPBF;
+
+message PrimitiveBlock {
+  required StringTable stringtable = 1;
+  repeated PrimitiveGroup primitivegroup = 2;
+  optional int32 granularity = 17 [default = 100];
+  optional int64 lat_offset = 19 [default = 0];
+  optional int64 lon_offset = 20 [default = 0];
+}
+
+message PrimitiveGroup {
+  repeated Node nodes = 1;
+  optional DenseNodes dense = 2;
+  repeated Way ways = 3;
+  repeated Relation relations = 4;
+}
+
+message StringTable {
+  repeated bytes s = 1;
+}
+
+message Node {
+  required sint64 id = 1;
+  repeated uint32 keys = 2 [packed = true];
+  repeated uint32 vals = 3 [packed = true];
+  required sint64 lat = 8;
+  required sint64 lon = 9;
+}
+
+message DenseNodes {
+  repeated sint64 id = 1 [packed = true];
+  repeated sint64 lat = 8 [packed = true];
+  repeated sint64 lon = 9 [packed = true];
+  repeated int32 keys_vals = 10 [packed = true];
+}
+
+message Way {
+  required int64 id = 1;
+  repeated uint32 keys = 2 [packed = true];
+  repeated uint32 vals = 3 [packed = true];
+  repeated sint64 refs = 8 [packed = true];
+}
+
+message Relation {
+  required int64 id = 1;
+  repeated uint32 keys = 2 [packed = true];
+  repeated uint32 vals = 3 [packed = true];
+  repeated int32 roles_sid = 8 [packed = true];
+  repeated sint64 memids = 9 [packed = true];
+  repeated int32 types = 10 [packed = true];
+}

@@ -1,0 +1,139 @@
+# osm-pbf-ingest
+
+Reads OpenStreetMap `.osm.pbf` files for map and routing compilers, in two
+passes:
+
+1. **Pass 1** (`prepare_ingest_index_with_options`) builds a compact
+   node-location store and the relation indexes, and can keep the tagged nodes
+   a filter accepts.
+2. **Pass 2** (`run_pass2_with_options`) hands nodes, ways and relations to
+   your `Pass2Sink` as normalized batches, in file order. It can skip the node
+   blobs and filter ways.
+
+Both passes decode blocks on a pool of worker threads. On a file sorted by
+type, each pass reads only the blobs that hold what it needs, found from the
+file's block framing without decompressing anything.
+
+## Example
+
+```rust,no_run
+use osm_pbf_ingest::{
+    IngestBuildProfile, NodeBatch, Pass2Options, Pass2Sink, PrepareOptions, RelationBatch,
+    WayBatch, prepare_ingest_index_with_options, run_pass2_with_options,
+};
+use std::path::Path;
+
+#[derive(Default)]
+struct Roads {
+    ways: usize,
+}
+
+impl Pass2Sink for Roads {
+    fn on_relation_batch(&mut self, _batch: RelationBatch) -> Result<(), String> {
+        Ok(())
+    }
+    fn on_way_batch(&mut self, batch: WayBatch) -> Result<(), String> {
+        self.ways += batch.ways.len();
+        Ok(())
+    }
+    fn on_node_batch(&mut self, _batch: NodeBatch) -> Result<(), String> {
+        Ok(())
+    }
+}
+
+fn main() -> Result<(), String> {
+    let pbf = Path::new("monaco.osm.pbf");
+    let profile = IngestBuildProfile::DesktopFull;
+    // Pass 1: node locations and relations, keeping the barrier nodes.
+    let index = prepare_ingest_index_with_options(
+        pbf,
+        profile,
+        Path::new("/tmp/ingest"),
+        PrepareOptions::new().keep_nodes(|tags| tags.contains_key("barrier")),
+        |_progress| {},
+        || false, // return true to cancel
+    )?;
+    // Pass 2: the roads, without reading the node blobs again.
+    let mut roads = Roads::default();
+    run_pass2_with_options(
+        pbf,
+        profile,
+        Pass2Options::new()
+            .skip_nodes()
+            .keep_ways(|tags| tags.contains_key("highway")),
+        &mut roads,
+        |_progress| {},
+        || false,
+    )?;
+    println!("{} barriers, {} roads", index.tagged_nodes.len(), roads.ways);
+    Ok(())
+}
+```
+
+`blob_index::PbfBlobIndex::scan` reads just the file header and blob layout,
+which is enough to read a PBF's header (bounds, feature flags) without
+decompressing any data. See
+`examples/` for more.
+
+## Public API includes `osmpbfreader` types
+
+This crate is built on [`osmpbfreader`](https://crates.io/crates/osmpbfreader)
+0.19 and exposes its types in its own API:
+
+- `NodeTags` is `pub use osmpbfreader::Tags`, and the `tags` field of
+  `NormalizedNode`, `NormalizedWay` and `NormalizedRelation` has that type.
+- `blob_index::read_blob_at` returns `osmpbfreader::fileformat::Blob`, a
+  generated type from `protobuf` 3 (the major version `osmpbfreader` uses),
+  so `protobuf`'s `Message` trait is part of the contract too.
+
+A major-version bump of `osmpbfreader` (or of the `protobuf` major it uses) is
+therefore a breaking change for this crate and needs a new major release
+(a new minor release while the version is 0.x).
+
+## Filtering by tags
+
+`PrepareOptions::keep_nodes` (pass 1) and `Pass2Options::keep_ways` (pass 2)
+take filters over `TagsRef`, the object's tags borrowed from the block, so an
+object the filter rejects never gets owned `Tags`. `TagLookup` is implemented
+by both `TagsRef` and `Tags`, so one helper can serve a filter and the code
+that later reads the kept objects:
+
+```rust
+use osm_pbf_ingest::{Pass2Options, TagLookup};
+
+fn is_road(tags: &(impl TagLookup + ?Sized)) -> bool {
+    tags.has_tag("highway") || tags.tag("route") == Some("ferry")
+}
+
+let options = Pass2Options::new().skip_nodes().keep_ways(|tags| is_road(tags));
+```
+
+## How blocks are decoded
+
+`PrimitiveBlock`s are decoded with [buffa](https://github.com/anthropics/buffa)
+views over `proto/osmformat.proto`, a copy of the OSM schema trimmed to the
+fields this crate reads: object metadata (`Info`, `DenseInfo`) and changesets
+are skipped without being parsed, and string tables and packed arrays are read
+in place. The generated code is checked in under `src/proto/`; after editing
+the schema, regenerate it with `scripts/gen-proto.sh` (needs `protoc`). Blob
+framing and the file header still go through `osmpbfreader`.
+
+## Status
+
+Version 0.x: the API may change between minor releases. It currently serves the
+Meridian map and route compilers.
+
+## Development
+
+```sh
+scripts/check.sh
+```
+
+runs what CI runs: formatting, clippy (warnings are errors) and the tests.
+
+The crate docs in `src/lib.rs` map which module holds what.
+
+## License
+
+Licensed under the Apache License, Version 2.0. OpenStreetMap data is under
+the ODbL; see <https://www.openstreetmap.org/copyright>.
