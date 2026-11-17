@@ -20,17 +20,15 @@ exclude = [
 ]
 
 [dependencies]
-# Decodes PrimitiveBlocks (src/proto/, generated from proto/osmformat.proto).
+# Decodes blobs and PrimitiveBlocks (src/proto/, generated from proto/*.proto).
 # Keep the version in step with tools/gen-proto's buffa-build: the generated
 # code targets this runtime.
 buffa = "0.9.2"
+# Tag keys and values; short ones are stored inline.
+compact_str = "0.10"
 crossbeam-channel = "0.5"
 flate2 = { version = "1.1", features = ["zlib-rs"] }
 memmap2 = "0.9"
-osmpbfreader = "0.19"
-# Matches osmpbfreader's protobuf major so the generated fileformat types it
-# re-exports (`Blob`, `BlobHeader`, `HeaderBlock`) share our Message trait.
-protobuf = "3"
 rayon = "1.10"
 roaring = "0.11"
 rustc-hash = "2"
@@ -40,6 +38,10 @@ tracing = "0.1"
 zerocopy = { version = "0.8", features = ["derive"] }
 
 [dev-dependencies]
+# The reference decoder the tests check this crate against, and the writer of
+# synthetic PBFs in tests and examples.
+osmpbfreader = "0.19"
+protobuf = "3"
 tempfile = "3"
 
 [lints.rust]

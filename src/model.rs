@@ -1,7 +1,7 @@
 //! The objects the passes hand out: nodes, ways and relations with owned tags,
 //! grouped into batches.
 
-use osmpbfreader::Tags;
+use crate::tags::Tags;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

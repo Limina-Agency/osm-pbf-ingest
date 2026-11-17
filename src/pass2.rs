@@ -4,7 +4,6 @@
 //! each sink resolves whatever geometry it needs from its own copy of the
 //! node store.
 
-use osmpbfreader::Tags;
 use std::path::Path;
 use std::time::Instant;
 use tracing::{debug, info};
@@ -19,7 +18,7 @@ use crate::progress::{
     IngestStage, IngestStageMetric, SharedIngestProgress, SharedIngestSummary, read_fraction,
     reports_progress,
 };
-use crate::tags::{Repeat, TagFilter, TagsRef};
+use crate::tags::{Repeat, TagFilter, Tags, TagsRef};
 
 /// Receives pass 2 batches by value, so a sink can hand them to other
 /// threads. Each call gets one block's objects of one kind, never an empty

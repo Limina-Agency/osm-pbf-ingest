@@ -1,0 +1,30 @@
+// The parts of OSM PBF's fileformat.proto (the blob framing) that
+// osm-pbf-ingest reads, with the upstream field numbers. `BlobHeader.indexdata`
+// and the compressions this crate does not decode (lzma, bzip2, lz4, zstd) are
+// left out; a blob that uses one has neither `raw` nor `zlib_data` and is
+// reported as unsupported. Upstream:
+// https://github.com/openstreetmap/OSM-binary/blob/master/osmpbf/fileformat.proto
+//
+// Regenerate the Rust code with scripts/gen-proto.sh after editing.
+//
+// The upstream schema's license is the one quoted in osmformat.proto; it
+// covers this file and the code generated from it in src/proto/.
+
+syntax = "proto2";
+
+package OSMPBF;
+
+message Blob {
+  // The uncompressed size, when compressed.
+  optional int32 raw_size = 2;
+
+  oneof data {
+    bytes raw = 1;
+    bytes zlib_data = 3;
+  }
+}
+
+message BlobHeader {
+  required string type = 1;
+  required int32 datasize = 3;
+}

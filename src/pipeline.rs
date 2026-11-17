@@ -15,8 +15,6 @@
 //! panic in `decode` is reported as that block's error.
 
 use crossbeam_channel::{Receiver, RecvTimeoutError, SendTimeoutError, Sender, bounded};
-use osmpbfreader::OsmPbfReader;
-use osmpbfreader::fileformat::Blob;
 use std::any::Any;
 use std::collections::BTreeMap;
 use std::fs::File;
@@ -27,7 +25,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-use crate::blob_index::{BlobLocation, blob_bytes, read_blob_at};
+use crate::blob_index::{Blob, BlobLocation, DataBlobs, blob_bytes, read_blob_at};
 use crate::osm_block::Block;
 use crate::progress::INGEST_CANCELLED;
 
@@ -208,7 +206,7 @@ fn spawn_reader(
                 }
             }
             BlobSource::All => {
-                for blob in OsmPbfReader::new(file).blobs() {
+                for blob in DataBlobs::new(file) {
                     if stop.load(Ordering::Relaxed) {
                         break;
                     }

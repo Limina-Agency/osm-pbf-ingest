@@ -14,22 +14,26 @@
 //! byte offset of every data blob, which lets later passes seek directly to the
 //! blobs they care about instead of streaming the whole file again.
 //!
-//! It also recovers the `OSMHeader` blob. `osmpbfreader`'s blob iterator drops
-//! that frame on the floor (it returns `Ok(None)` for any non-`OSMData` type),
-//! so the file's declared features — most importantly `Sort.Type_then_ID` — are
-//! unreachable through the API the rest of this crate uses. Several planned
-//! optimisations are only sound on a type-then-id-sorted file, and guessing is
-//! not an option, so we parse the header ourselves.
+//! It also recovers the `OSMHeader` blob, which declares the file's features —
+//! most importantly `Sort.Type_then_ID`. Several optimisations are only sound
+//! on a type-then-id-sorted file, and guessing is not an option.
+//!
+//! `DataBlobs` walks the same framing in order and yields each data blob's
+//! payload, for passes that read the whole file.
 
 use crate::osm_block::Block;
-use osmpbfreader::fileformat::{Blob, BlobHeader};
-use osmpbfreader::osmformat::HeaderBlock;
-use protobuf::Message;
+use crate::osm_block::proto::OSMPBF::{BlobHeader, HeaderBlock};
+use buffa::Message as _;
 use std::fmt;
 use std::fs::File;
 use std::io::{self, BufReader, Read, Seek, SeekFrom};
 use std::path::Path;
 use tracing::warn;
+
+/// The payload variants of a [`Blob`] this crate decodes.
+pub use crate::osm_block::proto::OSMPBF::__buffa::oneof::blob::Data as BlobData;
+/// A blob as stored in the file: raw or zlib-compressed protobuf bytes.
+pub use crate::osm_block::proto::OSMPBF::Blob;
 
 /// Upper bound on a `BlobHeader`, matching the limit `osmpbfreader` enforces.
 /// The spec says a header is at most 64 KiB; anything larger means we have lost
@@ -338,7 +342,7 @@ impl PbfBlobIndex {
             let Some(blob_header) = read_blob_header(reader, &mut offset)? else {
                 break;
             };
-            let datasize = blob_header.datasize();
+            let datasize = blob_header.datasize;
             if !(0..=MAX_BLOB_PAYLOAD_BYTES).contains(&datasize) {
                 return Err(PbfScanError::BlobPayloadOutOfRange {
                     offset: frame_start,
@@ -349,7 +353,7 @@ impl PbfBlobIndex {
             let payload_offset = offset;
             ensure_available(payload_offset, payload_len, stream_len)?;
 
-            match blob_header.type_() {
+            match blob_header.r#type.as_str() {
                 BLOB_TYPE_DATA => {
                     data_blobs.push(BlobLocation {
                         index: data_blobs.len(),
@@ -363,7 +367,7 @@ impl PbfBlobIndex {
                     // and it decides whether the fast paths are legal.
                     let blob = read_blob_payload(reader, payload_len, &mut offset, payload_offset)?;
                     let bytes = decode_blob_bytes(&blob, payload_offset)?;
-                    let parsed = HeaderBlock::parse_from_bytes(&bytes).map_err(|error| {
+                    let parsed = HeaderBlock::decode_from_slice(&bytes).map_err(|error| {
                         PbfScanError::MalformedHeaderBlock {
                             detail: error.to_string(),
                         }
@@ -647,6 +651,84 @@ pub fn read_blob_at<R: Read + Seek>(
     )
 }
 
+/// The data blobs of a stream in file order, from its current position. The
+/// header blob and blob types the spec reserves are skipped.
+pub(crate) struct DataBlobs<R> {
+    reader: R,
+    offset: u64,
+    done: bool,
+}
+
+impl<R: Read + Seek> DataBlobs<R> {
+    /// Iterates `reader` from its start.
+    pub(crate) fn new(reader: R) -> Self {
+        Self {
+            reader,
+            offset: 0,
+            done: false,
+        }
+    }
+
+    fn next_blob(&mut self) -> Result<Option<Blob>, PbfScanError> {
+        loop {
+            let frame_start = self.offset;
+            let Some(blob_header) = read_blob_header(&mut self.reader, &mut self.offset)? else {
+                return Ok(None);
+            };
+            let datasize = blob_header.datasize;
+            if !(0..=MAX_BLOB_PAYLOAD_BYTES).contains(&datasize) {
+                return Err(PbfScanError::BlobPayloadOutOfRange {
+                    offset: frame_start,
+                    datasize,
+                });
+            }
+            let payload_len = datasize as u32;
+            let payload_offset = self.offset;
+            if blob_header.r#type == BLOB_TYPE_DATA {
+                return read_blob_payload(
+                    &mut self.reader,
+                    payload_len,
+                    &mut self.offset,
+                    payload_offset,
+                )
+                .map(Some);
+            }
+            // Read past the payload rather than seek: there is no stream
+            // length to check a seek against, and a skipped blob cut short
+            // must still read as a truncated file.
+            let skipped = io::copy(
+                &mut (&mut self.reader).take(u64::from(payload_len)),
+                &mut io::sink(),
+            )
+            .map_err(|source| PbfScanError::Io {
+                path: "<stream>".to_string(),
+                source,
+            })?;
+            if skipped < u64::from(payload_len) {
+                return Err(PbfScanError::Truncated {
+                    offset: payload_offset,
+                });
+            }
+            self.offset += skipped;
+        }
+    }
+}
+
+impl<R: Read + Seek> Iterator for DataBlobs<R> {
+    type Item = Result<Blob, PbfScanError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.done {
+            return None;
+        }
+        let next = self.next_blob();
+        // Stop after the end of the file or the first error: past a framing
+        // error the next bytes cannot be trusted as a frame.
+        self.done = !matches!(next, Ok(Some(_)));
+        next.transpose()
+    }
+}
+
 /// Read the next `BlobHeader`, or `None` at a clean end of file.
 fn read_blob_header<R: Read + Seek>(
     reader: &mut R,
@@ -681,7 +763,7 @@ fn read_blob_header<R: Read + Seek>(
     read_exact_or_truncated(reader, &mut header_bytes, *offset)?;
     *offset += u64::from(header_len);
 
-    let header = BlobHeader::parse_from_bytes(&header_bytes).map_err(|error| {
+    let header = BlobHeader::decode_from_slice(&header_bytes).map_err(|error| {
         PbfScanError::MalformedBlobHeader {
             offset: frame_start,
             detail: error.to_string(),
@@ -699,7 +781,7 @@ fn read_blob_payload<R: Read + Seek>(
     let mut payload = vec![0u8; payload_len as usize];
     read_exact_or_truncated(reader, &mut payload, payload_offset)?;
     *offset += u64::from(payload_len);
-    Blob::parse_from_bytes(&payload).map_err(|error| PbfScanError::MalformedBlobHeader {
+    Blob::decode_from_slice(&payload).map_err(|error| PbfScanError::MalformedBlobHeader {
         offset: payload_offset,
         detail: error.to_string(),
     })
@@ -707,8 +789,8 @@ fn read_blob_payload<R: Read + Seek>(
 
 /// Uncompress a blob to its encoded protobuf bytes.
 pub(crate) fn decode_blob_bytes(blob: &Blob, offset: u64) -> Result<Vec<u8>, PbfScanError> {
-    if blob.has_raw() {
-        return Ok(blob.raw().to_vec());
+    if let Some(BlobData::Raw(raw)) = &blob.data {
+        return Ok(raw.clone());
     }
     let mut buffer = Vec::new();
     blob_bytes(blob, offset, &mut buffer)?;
@@ -723,25 +805,25 @@ pub(crate) fn blob_bytes<'b>(
     offset: u64,
     buffer: &'b mut Vec<u8>,
 ) -> Result<&'b [u8], PbfScanError> {
-    if blob.has_raw() {
-        return Ok(blob.raw());
+    match &blob.data {
+        Some(BlobData::Raw(raw)) => Ok(raw),
+        Some(BlobData::ZlibData(zlib_data)) => {
+            use flate2::read::ZlibDecoder;
+            buffer.clear();
+            // `raw_size` comes from the file, so it only sizes the first
+            // allocation up to the spec's cap; a larger block still inflates.
+            let expected = usize::try_from(blob.raw_size.unwrap_or(0).max(0)).unwrap_or(0);
+            buffer.reserve(expected.min(MAX_BLOB_PAYLOAD_BYTES as usize));
+            ZlibDecoder::new(zlib_data.as_slice())
+                .read_to_end(buffer)
+                .map_err(|source| PbfScanError::Io {
+                    path: "<blob>".to_string(),
+                    source,
+                })?;
+            Ok(buffer)
+        }
+        None => Err(PbfScanError::UnsupportedCompression { offset }),
     }
-    if blob.has_zlib_data() {
-        use flate2::read::ZlibDecoder;
-        buffer.clear();
-        // `raw_size` comes from the file, so it only sizes the first
-        // allocation up to the spec's cap; a larger block still inflates.
-        let expected = usize::try_from(blob.raw_size().max(0)).unwrap_or(0);
-        buffer.reserve(expected.min(MAX_BLOB_PAYLOAD_BYTES as usize));
-        ZlibDecoder::new(blob.zlib_data())
-            .read_to_end(buffer)
-            .map_err(|source| PbfScanError::Io {
-                path: "<blob>".to_string(),
-                source,
-            })?;
-        return Ok(buffer);
-    }
-    Err(PbfScanError::UnsupportedCompression { offset })
 }
 
 /// Reject a frame that claims more bytes than the stream holds, before we try
@@ -816,21 +898,18 @@ fn read_exact_or_truncated<R: Read>(
 fn header_from_block(block: HeaderBlock) -> PbfFileHeader {
     // HeaderBBox is in nanodegrees.
     const NANODEGREES: f64 = 1_000_000_000.0;
-    let bounds = block.bbox.as_ref().map(|bbox| PbfHeaderBounds {
-        west: bbox.left() as f64 / NANODEGREES,
-        south: bbox.bottom() as f64 / NANODEGREES,
-        east: bbox.right() as f64 / NANODEGREES,
-        north: bbox.top() as f64 / NANODEGREES,
+    let bounds = block.bbox.as_option().map(|bbox| PbfHeaderBounds {
+        west: bbox.left as f64 / NANODEGREES,
+        south: bbox.bottom as f64 / NANODEGREES,
+        east: bbox.right as f64 / NANODEGREES,
+        north: bbox.top as f64 / NANODEGREES,
     });
     PbfFileHeader {
         bounds,
-        required_features: block.required_features.clone(),
-        optional_features: block.optional_features.clone(),
-        writing_program: block
-            .writingprogram
-            .as_ref()
-            .map(|program| program.to_string()),
-        source: block.source.as_ref().map(|source| source.to_string()),
+        required_features: block.required_features,
+        optional_features: block.optional_features,
+        writing_program: block.writingprogram,
+        source: block.source,
         replication_timestamp: block.osmosis_replication_timestamp,
         replication_sequence_number: block.osmosis_replication_sequence_number,
     }
@@ -839,10 +918,14 @@ fn header_from_block(block: HeaderBlock) -> PbfFileHeader {
 #[cfg(test)]
 mod tests {
     use super::*;
+    // Frames are written with osmpbfreader's protobuf types, an encoder
+    // independent of the buffa decoder under test.
+    use osmpbfreader::fileformat::{Blob, BlobHeader};
     use osmpbfreader::osmformat::{
-        DenseNodes, HeaderBBox, Node as OsmNode, PrimitiveBlock, PrimitiveGroup,
+        DenseNodes, HeaderBBox, HeaderBlock, Node as OsmNode, PrimitiveBlock, PrimitiveGroup,
         Relation as OsmRelation, StringTable, Way as OsmWay,
     };
+    use protobuf::Message;
     use std::io::Cursor;
 
     /// Build a PBF frame: length-prefixed BlobHeader, then the blob payload.
@@ -1049,6 +1132,67 @@ mod tests {
         let decoded = decode_blob_bytes(&blob, 0).expect("decode blob");
         let block = PrimitiveBlock::parse_from_bytes(&decoded).expect("parse block");
         assert_eq!(block.granularity(), 7);
+    }
+
+    #[test]
+    fn data_blobs_yields_the_data_blobs_in_order_and_skips_the_rest() {
+        let mut bytes = frame(BLOB_TYPE_HEADER, &header_payload(&[], &["OsmSchema-V0.6"]));
+        bytes.extend_from_slice(&frame(BLOB_TYPE_DATA, &data_payload(3)));
+        bytes.extend_from_slice(&frame("OSMSomethingNew", b"opaque"));
+        bytes.extend_from_slice(&frame(BLOB_TYPE_DATA, &data_payload(5)));
+
+        let granularities = DataBlobs::new(Cursor::new(&bytes))
+            .map(|blob| {
+                let decoded = decode_blob_bytes(&blob.expect("blob"), 0).expect("decode blob");
+                PrimitiveBlock::parse_from_bytes(&decoded)
+                    .expect("parse block")
+                    .granularity()
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(granularities, [3, 5]);
+    }
+
+    #[test]
+    fn data_blobs_reports_a_cut_file_once_and_stops() {
+        let mut bytes = frame(BLOB_TYPE_HEADER, &header_payload(&[], &["OsmSchema-V0.6"]));
+        bytes.extend_from_slice(&frame(BLOB_TYPE_DATA, &data_payload(3)));
+        // A skipped blob cut short is a truncated file too.
+        let skipped = frame("OSMSomethingNew", b"opaque");
+        bytes.extend_from_slice(&skipped[..skipped.len() - 2]);
+
+        let results = DataBlobs::new(Cursor::new(&bytes)).collect::<Vec<_>>();
+        assert_eq!(results.len(), 2);
+        assert!(results[0].is_ok());
+        assert!(
+            matches!(results[1], Err(PbfScanError::Truncated { .. })),
+            "expected Truncated, got {:?}",
+            results[1]
+        );
+    }
+
+    #[test]
+    fn zlib_blobs_inflate_and_other_compressions_are_unsupported() {
+        use flate2::{Compression, write::ZlibEncoder};
+        use std::io::Write;
+
+        let payload = data_payload(9);
+        let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(&payload).expect("compress");
+        let mut compressed = osmpbfreader::fileformat::Blob::new();
+        compressed.set_zlib_data(encoder.finish().expect("compress"));
+        compressed.set_raw_size(payload.len() as i32);
+        let blob = super::Blob::decode_from_slice(&compressed.write_to_bytes().expect("encode"))
+            .expect("decode blob");
+        assert_eq!(decode_blob_bytes(&blob, 0).expect("inflate"), payload);
+
+        let mut lzma = osmpbfreader::fileformat::Blob::new();
+        lzma.set_lzma_data(b"not decoded".to_vec());
+        let blob = super::Blob::decode_from_slice(&lzma.write_to_bytes().expect("encode"))
+            .expect("decode blob");
+        assert!(matches!(
+            decode_blob_bytes(&blob, 42),
+            Err(PbfScanError::UnsupportedCompression { offset: 42 })
+        ));
     }
 
     #[test]
