@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.0 (unreleased)
+## 0.1.0 (2026-11-17)
 
 First release on crates.io, as `osm-pbf-ingest`. Until now the crate was
 `meridian-osm-ingest`, used from Git: depend on `osm-pbf-ingest` and import
