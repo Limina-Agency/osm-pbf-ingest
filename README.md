@@ -86,7 +86,7 @@ about 13 seconds on 4 threads, most of it reading the diffs. The result holds
 the same objects as `osmium apply-changes` writes.
 
 Planet diffs hold the whole world's edits; a `Clip` keeps the ones that touch
-the extract: changes to objects it holds, new nodes inside its header box, new
+the extract: changes to objects it holds, nodes created inside its header box,
 ways and relations that reach into it, and the nodes of every kept way.
 `examples/apply_osc.rs` runs the whole flow.
 

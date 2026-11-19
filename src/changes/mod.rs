@@ -33,12 +33,19 @@
 //!
 //! Replication diffs from planet.openstreetmap.org hold the whole world's
 //! edits. A [`Clip`] keeps the ones that matter to an extract: every change to
-//! an object the extract holds, new nodes inside its box, new ways with a node
-//! in the extract, the nodes of every kept way, and new relations with a kept
-//! member. This mirrors how extracts are cut, but is not identical to cutting
-//! a fresh extract: a new way that reaches into the region only through nodes
-//! created in an earlier, discarded diff is missed. Diffs from a regional
-//! replication server (Geofabrik's `-updates`) need no clip.
+//! an object the extract holds; nodes created inside its box; ways that reach
+//! a node the extract holds, and new ways made only of kept nodes; the nodes
+//! of every kept way; relations with a member the extract holds, and new ones
+//! with a kept member. An object the extract lacks but a diff modifies was
+//! left out when the extract was cut, so it is kept only when it now reaches
+//! into the extract, or as the node of a kept way.
+//!
+//! This mirrors how extracts are cut, but is not identical to cutting a fresh
+//! extract. A kept way's nodes that no diff touched and the extract lacks (a
+//! road extended across the extract's edge to an existing junction) stay
+//! missing. A box is coarser than an extract's polygon, so new objects in the
+//! box but outside the polygon are kept. Diffs from a regional replication
+//! server (Geofabrik's `-updates`) need no clip.
 //!
 //! # What is written
 //!
@@ -399,23 +406,45 @@ impl ChangeSet {
             };
             node_entries.entry(node.id).or_default().push(index);
             let upsert = *action != ChangeAction::Delete;
-            if known(ObjectKind::Node, node.id) || (upsert && clip.contains(node)) {
+            // A node modified but not in the extract existed when it was cut
+            // and was left out: only a new node can be new to the region.
+            let created = *action == ChangeAction::Create;
+            if known(ObjectKind::Node, node.id) || (created && clip.contains(node)) {
                 keep[index] = true;
                 if upsert {
                     present.insert(object.key());
                 }
             }
         }
+        // A relation modified but not in the extract was left out too: it
+        // joins the region only by reaching an object the extract holds. A
+        // new one may also reach a new object that was kept.
+        let reaches = |present: &HashSet<Key>, action: ChangeAction, kind: ObjectKind, id: i64| {
+            if action == ChangeAction::Create {
+                exists(present, kind, id)
+            } else {
+                base.contains(kind, id)
+            }
+        };
         let mut kept_ways = Vec::new();
         for (index, (action, object)) in entries.iter().enumerate() {
             let OsmObject::Way(way) = object else {
                 continue;
             };
             let upsert = *action != ChangeAction::Delete;
+            // A way joins the region by reaching a node the extract holds, or,
+            // when new, by being made only of nodes kept so far, as a building
+            // drawn inside the box is.
             let touches = || {
-                way.node_ids
+                let node_ids = &way.node_ids;
+                node_ids
                     .iter()
-                    .any(|&node| exists(&present, ObjectKind::Node, node))
+                    .any(|&node| base.contains(ObjectKind::Node, node))
+                    || (*action == ChangeAction::Create
+                        && !node_ids.is_empty()
+                        && node_ids
+                            .iter()
+                            .all(|&node| exists(&present, ObjectKind::Node, node)))
             };
             if known(ObjectKind::Way, way.id) || (upsert && touches()) {
                 keep[index] = true;
@@ -453,7 +482,7 @@ impl ChangeSet {
                         RelationMemberType::Way => ObjectKind::Way,
                         RelationMemberType::Relation => ObjectKind::Relation,
                     };
-                    exists(&present, kind, member.member_id)
+                    reaches(&present, *action, kind, member.member_id)
                 })
             };
             if known(ObjectKind::Relation, relation.id) || (upsert && touches()) {

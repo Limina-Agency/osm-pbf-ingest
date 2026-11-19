@@ -309,12 +309,17 @@ fn a_clip_keeps_what_touches_the_extract() {
     <node id="904" version="1" lat="52.4" lon="21.2"/>
     <way id="300" version="1"><nd ref="903"/><nd ref="904"/></way>
     <way id="301" version="1"><nd ref="1"/><nd ref="902"/></way>
+    <node id="910" version="1" lat="50.07" lon="19.95"/>
+    <way id="303" version="1"><nd ref="901"/><nd ref="910"/></way>
+    <way id="304" version="1"><nd ref="901"/><nd ref="909"/></way>
     <relation id="600" version="1"><member type="way" ref="300" role=""/></relation>
     <relation id="601" version="1"><member type="way" ref="301" role=""/></relation>
   </create>
   <modify>
     <node id="3" version="2" lat="40.0" lon="-3.7"/>
     <node id="905" version="7" lat="10.0" lon="10.0"/>
+    <node id="907" version="3" lat="49.1" lon="19.6"/>
+    <way id="302" version="4"><nd ref="901"/><nd ref="908"/></way>
   </modify>
   <delete>
     <node id="906" version="2"/>
@@ -323,7 +328,7 @@ fn a_clip_keeps_what_touches_the_extract() {
 </osmChange>"#;
     let mut changes = ChangeSet::new();
     let report = changes.read_osc_bytes(xml.as_bytes(), Some(&clip)).unwrap();
-    assert_eq!(report.objects, 13);
+    assert_eq!(report.objects, 18);
     let mut kept: Vec<String> = changes
         .iter()
         .map(|change| format!("{:?}{}", change.kind(), change.id()))
@@ -335,12 +340,14 @@ fn a_clip_keeps_what_touches_the_extract() {
             "Node3",
             "Node901",
             "Node902",
+            "Node910",
             "Relation601",
             "Way101",
-            "Way301"
+            "Way301",
+            "Way303"
         ]
     );
-    assert_eq!(report.kept, 6);
+    assert_eq!(report.kept, 8);
 
     // A later file changing a node an earlier file added keeps that change,
     // though the node is outside the box.
