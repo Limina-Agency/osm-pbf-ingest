@@ -1,5 +1,47 @@
 # Changelog
 
+## 0.4.0 (2026-11-19)
+
+### Change files
+
+The new `changes` module keeps an extract fresh without a database.
+`ChangeSet::read_osc` reads OSM change files (`.osc`, `.osc.gz`) from a
+replication server, and `apply_changes` writes an updated PBF from a
+`BaseIndex` of the old one. Only the blocks a change touches are decoded and
+written again; the rest are copied byte for byte, so 13 hours of planet diffs
+apply to the Małopolskie extract in about 13 seconds on four threads, most of
+it reading the diffs. The result holds the same objects as `osmium
+apply-changes` writes. `examples/apply_osc.rs` runs the whole flow.
+
+- A `Clip` keeps the planet diffs' changes that an extract could hold:
+  changes to objects it holds, nodes created inside its header box, ways and
+  relations that reach into it, and the nodes of every kept way. On
+  Małopolskie, ways with missing nodes after 13 hours of diffs drop from 251
+  to 1.
+- Breaking: `PbfFileHeader` has a new public field, `replication_base_url`,
+  the replication server whose diffs continue the file. Code that builds the
+  struct with a literal needs to set it.
+
+### Reading
+
+- Pass 2 reads groups of ways straight from the wire, one value at a time as
+  it uses them, instead of decoding every packed list into a vector up front.
+  Ways in any encoding but the plain one every writer produces still go
+  through a view, with the same results. Single-threaded on Małopolskie,
+  inflating and reading the way blocks takes 0.8 s instead of 1.25 s, and
+  classifying the blobs 50 ms instead of 95 ms. Pass 1 skips way groups
+  undecoded, which matters on files not sorted by type.
+- `Pass2Options::skip_relations` hands the sink no relations and decodes
+  none, for a caller that took them from pass 1; on a file sorted by type the
+  relation-only blobs are not read at all. `Pass2Options::queue_capacity`
+  bounds the decoded blocks waiting for a slow sink (16 by default, as
+  before).
+- A relation's members are collected at their exact size, and
+  `PackedRelationIndex` keeps way IDs, relation IDs and their boundaries in
+  exact-size arrays, 16 bytes per way and 8 per membership instead of 24-byte
+  ranges in doubling vectors. Together they take about 20 MB less of pass 1's
+  memory on Małopolskie.
+
 ## 0.3.0 (2026-11-19)
 
 ### Packed node store
