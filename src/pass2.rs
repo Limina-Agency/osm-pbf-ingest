@@ -53,6 +53,16 @@ pub struct Pass2Options {
     /// nodes: for a caller that kept the nodes it needs in pass 1
     /// ([`PrepareOptions::keep_nodes`](crate::PrepareOptions::keep_nodes)).
     pub skip_nodes: bool,
+    /// Hand the sink no relations, and don't decode them: for a caller that
+    /// took the relations it needs from pass 1
+    /// ([`PreparedIngestIndex::supported_relations`](crate::PreparedIngestIndex::supported_relations)).
+    /// The relation blobs are still read when they hold ways too.
+    pub skip_relations: bool,
+    /// Decoded blocks waiting for the sink, at most, besides those the
+    /// workers are decoding. Defaults to the profile's (16 on desktop, 4 on
+    /// mobile). A sink slower than the decode workers keeps the queue full,
+    /// so a smaller one holds fewer blocks in memory.
+    pub queue_capacity: Option<usize>,
     /// Hand the sink only the ways this accepts. Defaults to every way.
     ///
     /// It reads each way's tags borrowed from the block, so only the ways it
@@ -83,6 +93,8 @@ impl std::fmt::Debug for Pass2Options {
             .debug_struct("Pass2Options")
             .field("worker_threads", &self.worker_threads)
             .field("skip_nodes", &self.skip_nodes)
+            .field("skip_relations", &self.skip_relations)
+            .field("queue_capacity", &self.queue_capacity)
             .field("keep_way", &self.keep_way)
             .field(
                 "keep_way_where",
@@ -104,6 +116,18 @@ impl Pass2Options {
 
     pub fn skip_nodes(mut self) -> Self {
         self.skip_nodes = true;
+        self
+    }
+
+    /// See [`queue_capacity`](Self::queue_capacity). At least 1.
+    pub fn queue_capacity(mut self, queue_capacity: usize) -> Self {
+        self.queue_capacity = Some(queue_capacity.max(1));
+        self
+    }
+
+    /// See [`skip_relations`](Self::skip_relations).
+    pub fn skip_relations(mut self) -> Self {
+        self.skip_relations = true;
         self
     }
 
@@ -186,8 +210,10 @@ where
         pbf_path,
         build_profile,
         build_profile.worker_threads(),
+        build_profile.queue_capacity(),
         Selection {
             skip_nodes: true,
+            skip_relations: false,
             keep_way: TagFilter::Owned(keep_way),
             keep_way_where: None,
         },
@@ -242,8 +268,12 @@ where
         options
             .worker_threads
             .unwrap_or_else(|| build_profile.worker_threads()),
+        options
+            .queue_capacity
+            .unwrap_or_else(|| build_profile.queue_capacity()),
         Selection {
             skip_nodes: options.skip_nodes,
+            skip_relations: options.skip_relations,
             keep_way: options.keep_way.map_or(TagFilter::All, TagFilter::Borrowed),
             keep_way_where: options.keep_way_where,
         },
@@ -258,6 +288,8 @@ where
 struct Selection {
     /// Read only the blobs that hold ways or relations, and no nodes.
     skip_nodes: bool,
+    /// Decode no relations.
+    skip_relations: bool,
     keep_way: TagFilter,
     keep_way_where: Option<Arc<WayFilter>>,
 }
@@ -266,6 +298,7 @@ fn run<S, F, C>(
     pbf_path: &Path,
     build_profile: IngestBuildProfile,
     worker_threads: usize,
+    queue_capacity: usize,
     selection: Selection,
     sink: &mut S,
     on_progress: F,
@@ -285,12 +318,16 @@ where
     let started = Instant::now();
     // As in pass 1: on a file not sorted by type the classification narrows
     // nothing and every blob is read.
-    let source = if selection.skip_nodes {
+    let mut kinds = vec![ObjectKind::Way];
+    if !selection.skip_nodes {
+        kinds.push(ObjectKind::Node);
+    }
+    if !selection.skip_relations {
+        kinds.push(ObjectKind::Relation);
+    }
+    let source = if kinds.len() < 3 {
         let blob_index = scan_blob_index(pbf_path)?;
-        let wanted = blob_index
-            .blobs_containing_any(&[ObjectKind::Way, ObjectKind::Relation])
-            .copied()
-            .collect();
+        let wanted = blob_index.blobs_containing_any(&kinds).copied().collect();
         BlobSource::Only(wanted)
     } else {
         BlobSource::All
@@ -313,7 +350,7 @@ where
         source,
         PipelineConfig {
             worker_threads,
-            queue_capacity: build_profile.queue_capacity(),
+            queue_capacity,
         },
         move |block, inflated| decode_block(&block, inflated, &selection),
         &should_cancel,
@@ -423,8 +460,10 @@ fn decode_block(
                 ways.push(decoded.normalized_way(way, tags));
             }
         }
-        for relation in group.relations.iter() {
-            relations.push(decoded.normalized_relation(relation, &mut pairs)?);
+        if !selection.skip_relations {
+            for relation in group.relations.iter() {
+                relations.push(decoded.normalized_relation(relation, &mut pairs)?);
+            }
         }
     }
 
@@ -733,6 +772,42 @@ mod tests {
         assert_eq!(
             (owned.node_ids, owned.way_ids, owned.relation_ids),
             (borrowed.node_ids, borrowed.way_ids, borrowed.relation_ids)
+        );
+    }
+
+    #[test]
+    fn skip_relations_hands_out_no_relations_and_the_rest_as_before() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = write_fixture(dir.path(), &sorted_fixture());
+        let run = |options: Pass2Options| {
+            let mut collected = Collected::default();
+            let summary = run_pass2_with_options(
+                &path,
+                IngestBuildProfile::DesktopFull,
+                options,
+                &mut collected,
+                |_progress| {},
+                || false,
+            )
+            .expect("pass 2");
+            (
+                collected.node_ids,
+                collected.way_ids,
+                collected.relation_ids,
+                summary.relation_batches,
+            )
+        };
+        assert_eq!(
+            run(Pass2Options::new().skip_relations()),
+            (vec![2], vec![100, 101], vec![], 0)
+        );
+        assert_eq!(
+            run(Pass2Options::new().skip_nodes().skip_relations()),
+            (vec![], vec![100, 101], vec![], 0)
+        );
+        assert_eq!(
+            run(Pass2Options::new()),
+            (vec![2], vec![100, 101], vec![500], 1)
         );
     }
 

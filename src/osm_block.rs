@@ -158,7 +158,15 @@ impl<'a> Block<'a> {
         relation: &RelationView<'a>,
         pairs: &mut Vec<TagPair<'s>>,
     ) -> Result<NormalizedRelation, String> {
-        let mut members = Vec::new();
+        // At its exact size: pass 1 keeps every supported relation to the
+        // end, and a pushed vector holds a quarter more on average.
+        let mut members = Vec::with_capacity(
+            relation
+                .memids
+                .len()
+                .min(relation.types.len())
+                .min(relation.roles_sid.len()),
+        );
         let mut id = 0i64;
         for ((delta, member_type), role) in relation
             .memids
