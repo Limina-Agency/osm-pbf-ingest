@@ -1699,8 +1699,7 @@ impl ::buffa::Message for Relation {
         self.types.clear();
     }
 }
-/// The file header, from the OSMHeader blob. `osmosis_replication_base_url`
-/// is left out.
+/// The file header, from the OSMHeader blob.
 #[derive(Clone, PartialEq, Default)]
 pub struct HeaderBlock {
     /// Field 1: `bbox`
@@ -1717,6 +1716,10 @@ pub struct HeaderBlock {
     pub osmosis_replication_timestamp: ::core::option::Option<i64>,
     /// Field 33: `osmosis_replication_sequence_number`
     pub osmosis_replication_sequence_number: ::core::option::Option<i64>,
+    /// Field 34: `osmosis_replication_base_url`
+    pub osmosis_replication_base_url: ::core::option::Option<
+        ::buffa::alloc::string::String,
+    >,
 }
 impl ::core::fmt::Debug for HeaderBlock {
     fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
@@ -1731,6 +1734,7 @@ impl ::core::fmt::Debug for HeaderBlock {
                 "osmosis_replication_sequence_number",
                 &self.osmosis_replication_sequence_number,
             )
+            .field("osmosis_replication_base_url", &self.osmosis_replication_base_url)
             .finish()
     }
 }
@@ -1774,6 +1778,16 @@ impl HeaderBlock {
     ///Sets [`Self::osmosis_replication_sequence_number`] to `Some(value)`, consuming and returning `self`.
     pub fn with_osmosis_replication_sequence_number(mut self, value: i64) -> Self {
         self.osmosis_replication_sequence_number = Some(value);
+        self
+    }
+    #[must_use = "with_* setters return `self` by value; assign or chain the result"]
+    #[inline]
+    ///Sets [`Self::osmosis_replication_base_url`] to `Some(value)`, consuming and returning `self`.
+    pub fn with_osmosis_replication_base_url(
+        mut self,
+        value: impl Into<::buffa::alloc::string::String>,
+    ) -> Self {
+        self.osmosis_replication_base_url = Some(value.into());
         self
     }
 }
@@ -1823,6 +1837,9 @@ impl ::buffa::Message for HeaderBlock {
         if let Some(v) = self.osmosis_replication_sequence_number {
             size += 2u64 + ::buffa::types::int64_encoded_len(v) as u64;
         }
+        if let Some(ref v) = self.osmosis_replication_base_url {
+            size += 2u64 + ::buffa::types::string_encoded_len(v) as u64;
+        }
         ::buffa::saturate_size(size)
     }
     fn write_to(
@@ -1857,6 +1874,9 @@ impl ::buffa::Message for HeaderBlock {
         }
         if let Some(v) = self.osmosis_replication_sequence_number {
             ::buffa::types::put_int64_field(33u32, v, buf);
+        }
+        if let Some(ref v) = self.osmosis_replication_base_url {
+            ::buffa::types::put_string_field(34u32, v, buf);
         }
     }
     fn merge_field(
@@ -1943,6 +1963,18 @@ impl ::buffa::Message for HeaderBlock {
                     ::buffa::types::decode_int64(buf)?,
                 );
             }
+            34u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::LengthDelimited,
+                )?;
+                ::buffa::types::merge_string(
+                    self
+                        .osmosis_replication_base_url
+                        .get_or_insert_with(::buffa::alloc::string::String::new),
+                    buf,
+                )?;
+            }
             _ => {
                 ::buffa::encoding::skip_field_depth(tag, buf, ctx.depth())?;
             }
@@ -1957,6 +1989,7 @@ impl ::buffa::Message for HeaderBlock {
         self.source = ::core::option::Option::None;
         self.osmosis_replication_timestamp = ::core::option::Option::None;
         self.osmosis_replication_sequence_number = ::core::option::Option::None;
+        self.osmosis_replication_base_url = ::core::option::Option::None;
     }
 }
 /// Nanodegrees.

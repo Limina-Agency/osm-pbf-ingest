@@ -86,9 +86,11 @@
 //! | [`blob_index`] | the file's blob framing, and which blobs hold which object kinds |
 //! | [`node_store`] | the node-location stores pass 1 builds: packed (`packed_node_store`) for files sorted by ID, sharded otherwise |
 //! | [`object_lookup`] | finding one object by ID in a sorted file |
+//! | [`changes`] | reading OSM change files and applying them to a PBF, which writes an updated one (`pbf_writer`) |
 
 mod binary_layout;
 pub mod blob_index;
+pub mod changes;
 mod model;
 pub mod node_store;
 pub mod object_lookup;
@@ -98,6 +100,7 @@ mod packed_node_store;
 pub mod packed_tags;
 mod pass1;
 mod pass2;
+mod pbf_writer;
 mod pipeline;
 mod profile;
 mod progress;

@@ -29,6 +29,8 @@ compact_str = "0.10"
 crossbeam-channel = "0.5"
 flate2 = { version = "1.1", features = ["zlib-rs"] }
 memmap2 = "0.9"
+# Reads OSM change files (.osc).
+quick-xml = "0.42"
 rayon = "1.10"
 roaring = "0.11"
 rustc-hash = "2"

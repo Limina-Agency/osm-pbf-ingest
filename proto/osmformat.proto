@@ -88,8 +88,7 @@ message Relation {
   repeated int32 types = 10 [packed = true];
 }
 
-// The file header, from the OSMHeader blob. `osmosis_replication_base_url`
-// is left out.
+// The file header, from the OSMHeader blob.
 message HeaderBlock {
   optional HeaderBBox bbox = 1;
   repeated string required_features = 4;
@@ -98,6 +97,7 @@ message HeaderBlock {
   optional string source = 17;
   optional int64 osmosis_replication_timestamp = 32;
   optional int64 osmosis_replication_sequence_number = 33;
+  optional string osmosis_replication_base_url = 34;
 }
 
 // Nanodegrees.

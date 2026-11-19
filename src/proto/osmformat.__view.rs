@@ -2492,8 +2492,7 @@ impl ::buffa::HasMessageView for super::super::Relation {
     type View<'a> = RelationView<'a>;
     type ViewHandle = RelationOwnedView;
 }
-/// The file header, from the OSMHeader blob. `osmosis_replication_base_url`
-/// is left out.
+/// The file header, from the OSMHeader blob.
 #[derive(Clone, Debug, Default)]
 pub struct HeaderBlockView<'a> {
     /// Field 1: `bbox`
@@ -2510,6 +2509,8 @@ pub struct HeaderBlockView<'a> {
     pub osmosis_replication_timestamp: ::core::option::Option<i64>,
     /// Field 33: `osmosis_replication_sequence_number`
     pub osmosis_replication_sequence_number: ::core::option::Option<i64>,
+    /// Field 34: `osmosis_replication_base_url`
+    pub osmosis_replication_base_url: ::core::option::Option<&'a str>,
 }
 impl<'a> ::buffa::MessageView<'a> for HeaderBlockView<'a> {
     type Owned = super::super::HeaderBlock;
@@ -2594,6 +2595,15 @@ impl<'a> ::buffa::MessageView<'a> for HeaderBlockView<'a> {
                     ::buffa::types::decode_int64(&mut cur)?,
                 );
             }
+            34u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::LengthDelimited,
+                )?;
+                view.osmosis_replication_base_url = Some(
+                    ::buffa::types::borrow_str(&mut cur)?,
+                );
+            }
             4u32 => {
                 ::buffa::encoding::check_wire_type(
                     tag,
@@ -2660,6 +2670,9 @@ impl<'a> ::buffa::MessageView<'a> for HeaderBlockView<'a> {
             osmosis_replication_timestamp: self.osmosis_replication_timestamp,
             osmosis_replication_sequence_number: self
                 .osmosis_replication_sequence_number,
+            osmosis_replication_base_url: self
+                .osmosis_replication_base_url
+                .map(|s| s.to_string()),
             ..::core::default::Default::default()
         })
     }
@@ -2696,6 +2709,9 @@ impl<'a> ::buffa::ViewEncode<'a> for HeaderBlockView<'a> {
         if let Some(v) = self.osmosis_replication_sequence_number {
             size += 2u64 + ::buffa::types::int64_encoded_len(v) as u64;
         }
+        if let Some(ref v) = self.osmosis_replication_base_url {
+            size += 2u64 + ::buffa::types::string_encoded_len(v) as u64;
+        }
         ::buffa::saturate_size(size)
     }
     #[allow(clippy::needless_borrow)]
@@ -2731,6 +2747,9 @@ impl<'a> ::buffa::ViewEncode<'a> for HeaderBlockView<'a> {
         }
         if let Some(v) = self.osmosis_replication_sequence_number {
             ::buffa::types::put_int64_field(33u32, v, buf);
+        }
+        if let Some(ref v) = self.osmosis_replication_base_url {
+            ::buffa::types::put_string_field(34u32, v, buf);
         }
     }
 }
@@ -2858,6 +2877,11 @@ impl HeaderBlockOwnedView {
     #[must_use]
     pub fn osmosis_replication_sequence_number(&self) -> ::core::option::Option<i64> {
         self.0.reborrow().osmosis_replication_sequence_number
+    }
+    /// Field 34: `osmosis_replication_base_url`
+    #[must_use]
+    pub fn osmosis_replication_base_url(&self) -> ::core::option::Option<&'_ str> {
+        self.0.reborrow().osmosis_replication_base_url
     }
 }
 impl ::core::convert::From<::buffa::OwnedView<HeaderBlockView<'static>>>
