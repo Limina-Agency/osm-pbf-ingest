@@ -5,7 +5,7 @@ use super::Key;
 use crate::blob_index::{
     Blob, BlobLocation, ObjectKind, PbfBlobIndex, PbfFileHeader, decode_blob_bytes,
 };
-use crate::osm_block::{Block, for_each_node};
+use crate::osm_block::{Block, Group, for_each_node};
 use buffa::Message as _;
 use memmap2::Mmap;
 use rayon::prelude::*;
@@ -183,10 +183,16 @@ fn for_each_key(
     let block = Block::decode(&bytes)?;
     let mut pairs = Vec::new();
     for group in block.groups() {
-        for_each_node(&block, group, false, &mut pairs, |node, _, _| {
-            visit(Key::new(ObjectKind::Node, node.id));
-            Ok(())
-        })?;
+        for_each_node(
+            &block,
+            Group::View(group),
+            false,
+            &mut pairs,
+            |node, _, _| {
+                visit(Key::new(ObjectKind::Node, node.id));
+                Ok(())
+            },
+        )?;
         for way in group.ways.iter() {
             visit(Key::new(ObjectKind::Way, way.id));
         }

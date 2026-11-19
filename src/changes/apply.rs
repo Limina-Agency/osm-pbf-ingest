@@ -2,7 +2,7 @@
 
 use super::base::{BaseIndex, payload, read_block};
 use super::{Change, ChangeSet, Key, OsmNode, OsmObject, OsmRelation, OsmWay};
-use crate::osm_block::{Block, for_each_node};
+use crate::osm_block::{Block, Group, for_each_node};
 use crate::pbf_writer::{
     BLOB_TYPE_DATA, BLOB_TYPE_HEADER, Header, OBJECTS_PER_BLOCK, encode_block, encode_header,
     frame, frame_blob,
@@ -396,16 +396,22 @@ fn decode_objects(bytes: &[u8]) -> Result<Vec<OsmObject>, String> {
     let mut pairs = Vec::new();
     let mut node_ids = Vec::new();
     for group in block.groups() {
-        for_each_node(&block, group, true, &mut pairs, |node, tags, repeat| {
-            objects.push(OsmObject::Node(OsmNode {
-                id: node.id,
-                version: 0,
-                decimicro_lat: node.decimicro_lat,
-                decimicro_lon: node.decimicro_lon,
-                tags: TagsRef::new(tags, repeat).to_tags(),
-            }));
-            Ok(())
-        })?;
+        for_each_node(
+            &block,
+            Group::View(group),
+            true,
+            &mut pairs,
+            |node, tags, repeat| {
+                objects.push(OsmObject::Node(OsmNode {
+                    id: node.id,
+                    version: 0,
+                    decimicro_lat: node.decimicro_lat,
+                    decimicro_lon: node.decimicro_lon,
+                    tags: TagsRef::new(tags, repeat).to_tags(),
+                }));
+                Ok(())
+            },
+        )?;
         for way in group.ways.iter() {
             block.tag_pairs(&way.keys, &way.vals, &mut pairs)?;
             block.way_node_ids(way, &mut node_ids);
