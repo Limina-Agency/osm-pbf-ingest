@@ -1,5 +1,47 @@
 # Changelog
 
+## Unreleased
+
+Breaking changes: the next release is 0.3.0.
+
+### Packed node store
+
+On a file sorted by ID, pass 1 now builds `NodeLocationStore::Packed`: the
+node locations in ID order, in blocks of up to 128 nodes packed with a frame
+of reference, about 6 bytes per node instead of 16. Each decode worker packs
+its block's nodes and the collector appends them in file order, so there is
+no spill, sort or rewrite. On the Małopolskie extract (24.3 million nodes)
+the store takes 146 MiB instead of 370 MiB, pass 1 takes 0.6 s instead of
+0.9 s on four threads, and a lookup about 80 ns instead of 140 ns.
+
+- Breaking: `NodeLocationStore` has a third variant, `Packed(PackedNodeStore)`.
+  `NodeStoreStrategy` still picks where the store lives: `Ram`, or `Disk`, a
+  mapped file `temp_dir/node_store/nodes.packed` that the store deletes when
+  dropped.
+- A file whose node IDs do not increase from block to block falls back to
+  the sharded `Ram` or `Disk` store, as before; so does a store reopened with
+  `NodeLocationStore::open_disk`. `persist_to` writes the same shard files for
+  every variant.
+- `NodeLocationStore::cursor` returns a `NodeCursor`, which answers like
+  `get` and skips the block search while IDs stay in one block.
+- `NodeLocationStore::may_touch(node_ids, areas)` says whether nodes may lie
+  in any of the `DecimicroBox`es, from the packed blocks' boxes, without
+  looking the nodes up (always true for the sharded stores).
+- `node_store::decode_decimicro` converts 1e-7 degree units as
+  `decode_lat_lng` does.
+
+### Reading one area
+
+- `PrepareOptions::keep_nodes_within(boxes)` keeps only the tagged nodes
+  inside the boxes, so a caller reading one area can skip the node blobs in
+  pass 2.
+- `Pass2Options::keep_ways_where(filter)` takes a `WayFilter`, a closure that
+  sees each way's ID, node IDs and borrowed tags (`WayRef`) on the decode
+  workers. With `may_touch` it drops the ways outside an area before they get
+  owned tags.
+- Breaking: `PrepareOptions` and `Pass2Options` are no longer `Copy`, since
+  they can hold the boxes and the filter; clone them instead.
+
 ## 0.2.0 (2026-11-17)
 
 ### No more `osmpbfreader` at runtime

@@ -82,6 +82,25 @@ decompressing any data. See
 buffa release that changes generated messages is therefore a breaking change
 for this crate and needs a new minor release while the version is 0.x.
 
+## The node store
+
+Pass 1 keeps every node's location for pass 2's sinks to look up. On a file
+sorted by ID, as Geofabrik extracts and the planet are, it packs the
+locations in ID order, about 6 bytes per node: 146 MiB for the 24 million
+nodes of the Małopolskie extract, which the sharded store of 0.2 held in
+370 MiB. Each decode worker packs its own block's nodes, so nothing is sorted
+or spilled. Inputs over 32 MiB (24 MiB on mobile) keep the store in a mapped
+file under `temp_dir/node_store`, removed when the store is dropped. Files
+not sorted by ID fall back to the sharded stores of 0.2.
+
+`NodeLocationStore::cursor` looks up runs of nearby IDs, such as a way's
+nodes, faster than `get`. For a caller that reads one area of a large file,
+`NodeLocationStore::may_touch` rules out most ways outside it from the boxes
+of the packed blocks, without looking their nodes up;
+`PrepareOptions::keep_nodes_within` keeps only the tagged nodes inside it, and
+`Pass2Options::keep_ways_where` drops the ways outside it on the decode
+workers, before they get owned tags.
+
 ## Filtering by tags
 
 `PrepareOptions::keep_nodes` (pass 1) and `Pass2Options::keep_ways` (pass 2)
