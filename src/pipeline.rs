@@ -26,7 +26,7 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use crate::blob_index::{Blob, BlobLocation, DataBlobs, blob_bytes, read_blob_at};
-use crate::osm_block::Block;
+use crate::osm_block::{Block, Decoding};
 use crate::progress::INGEST_CANCELLED;
 
 /// How long a blocked thread waits before checking the stop flag again.
@@ -49,14 +49,19 @@ pub(crate) struct RawBlock {
 
 impl RawBlock {
     /// Inflates the blob into `inflated`, a buffer the worker reuses from
-    /// block to block, and decodes the block from it.
-    pub fn decode<'b>(&'b self, inflated: &'b mut Vec<u8>) -> Result<Block<'b>, String> {
+    /// block to block, and decodes the block from it, handling the groups
+    /// as `decoding` says.
+    pub fn decode_with<'b>(
+        &'b self,
+        inflated: &'b mut Vec<u8>,
+        decoding: Decoding,
+    ) -> Result<Block<'b>, String> {
         let failed =
             |error: String| format!("Failed to decode PBF block {}: {error}", self.sequence);
         // Blobs read in order carry no file offset; the sequence names them.
         let bytes =
             blob_bytes(&self.blob, 0, inflated).map_err(|error| failed(error.to_string()))?;
-        Block::decode(bytes).map_err(failed)
+        Block::decode_with(bytes, decoding).map_err(failed)
     }
 }
 
@@ -449,7 +454,7 @@ mod tests {
             BlobSource::Only(wanted),
             config(2),
             |block, inflated| {
-                let block = block.decode(inflated)?;
+                let block = block.decode_with(inflated, Decoding::Views)?;
                 Ok(block.groups()[0].dense.id[0])
             },
             &|| false,
