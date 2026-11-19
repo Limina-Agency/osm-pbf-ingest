@@ -168,6 +168,9 @@ pub struct PbfFileHeader {
     pub source: Option<String>,
     pub replication_timestamp: Option<i64>,
     pub replication_sequence_number: Option<i64>,
+    /// The replication server whose diffs continue this file, such as
+    /// `https://download.geofabrik.de/europe/poland/malopolskie-updates`.
+    pub replication_base_url: Option<String>,
 }
 
 impl PbfFileHeader {
@@ -912,6 +915,7 @@ fn header_from_block(block: HeaderBlock) -> PbfFileHeader {
         source: block.source,
         replication_timestamp: block.osmosis_replication_timestamp,
         replication_sequence_number: block.osmosis_replication_sequence_number,
+        replication_base_url: block.osmosis_replication_base_url,
     }
 }
 
