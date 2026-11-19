@@ -82,7 +82,7 @@
 //! | `osm_block` | decoding a `PrimitiveBlock` and walking its nodes, ways and relations |
 //! | `model`, `progress`, `profile`, `tags` | the types the passes hand out and take |
 //! | [`blob_index`] | the file's blob framing, and which blobs hold which object kinds |
-//! | [`node_store`] | the node-location store pass 1 builds |
+//! | [`node_store`] | the node-location stores pass 1 builds: packed (`packed_node_store`) for files sorted by ID, sharded otherwise |
 //! | [`object_lookup`] | finding one object by ID in a sorted file |
 
 mod binary_layout;
@@ -92,6 +92,7 @@ pub mod node_store;
 pub mod object_lookup;
 mod osm_block;
 pub mod packed_ids;
+mod packed_node_store;
 pub mod packed_tags;
 mod pass1;
 mod pass2;
@@ -116,7 +117,8 @@ pub use pass1::{
 #[allow(deprecated)]
 pub use pass2::run_pass2_ways_and_relations;
 pub use pass2::{
-    Pass2Options, Pass2Sink, run_pass2, run_pass2_with_options, run_pass2_with_threads,
+    Pass2Options, Pass2Sink, WayFilter, WayRef, run_pass2, run_pass2_with_options,
+    run_pass2_with_threads,
 };
 pub use profile::IngestBuildProfile;
 pub use progress::{

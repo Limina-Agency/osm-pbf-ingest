@@ -7,7 +7,7 @@
 
 use roaring::RoaringTreemap;
 use serde::{Deserialize, Serialize};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 use tracing::{debug, info, warn};
@@ -19,6 +19,7 @@ use crate::node_store::{
     choose_node_store_strategy, encode_decimicro,
 };
 use crate::osm_block::{TagPair, for_each_node};
+use crate::packed_node_store::{DecimicroBox, PackedRun, PackedStoreBuilder};
 use crate::pipeline::{self, BlobSource, PipelineConfig, RawBlock};
 use crate::profile::{IngestBuildProfile, validate_worker_count};
 use crate::progress::{
@@ -40,14 +41,15 @@ use crate::tags::{TagFilter, Tags, TagsRef};
 ///     .keep_nodes(|tags| tags.contains_key("barrier"));
 /// # let _ = options;
 /// ```
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Default)]
 #[non_exhaustive]
 pub struct PrepareOptions {
     /// Decode workers. Defaults to the profile's worker count.
     pub worker_threads: Option<usize>,
-    /// Where the node-location store lives while it is built. Defaults to
-    /// RAM for inputs up to a profile-dependent size, disk beyond it. Both
-    /// strategies answer lookups identically and persist identical files.
+    /// Where the node-location store lives. Defaults to RAM for inputs up
+    /// to a profile-dependent size, a mapped file in `temp_dir/node_store`
+    /// beyond it. Both strategies answer lookups identically and persist
+    /// identical files.
     pub node_store: Option<NodeStoreStrategy>,
     /// Keep the tagged nodes this accepts in
     /// [`PreparedIngestIndex::tagged_nodes`]. Defaults to keeping none.
@@ -55,6 +57,10 @@ pub struct PrepareOptions {
     /// It reads each node's tags borrowed from the block, so only the nodes
     /// it accepts get owned [`Tags`].
     pub keep_node: Option<fn(&TagsRef<'_>) -> bool>,
+    /// Keep only the tagged nodes inside one of these boxes, edges included:
+    /// those `keep_node` accepts, or every tagged node without it. Defaults to
+    /// keeping nodes anywhere.
+    pub keep_nodes_within: Option<Arc<[DecimicroBox]>>,
     /// The owned-tags filter of the deprecated
     /// [`prepare_ingest_index_keeping_nodes`], used when `keep_node` is unset.
     legacy_keep_node: Option<fn(&Tags) -> bool>,
@@ -80,11 +86,30 @@ impl PrepareOptions {
         self
     }
 
+    /// Keep only the tagged nodes inside `boxes` (see
+    /// [`keep_nodes_within`](Self::keep_nodes_within)): for a caller that
+    /// reads one area of a large file and then skips the node blobs in
+    /// pass 2.
+    ///
+    /// ```
+    /// use osm_pbf_ingest::PrepareOptions;
+    /// use osm_pbf_ingest::node_store::DecimicroBox;
+    ///
+    /// // The tagged nodes in and around Zakopane.
+    /// let area = DecimicroBox::around_degrees(49.25, 19.90, 49.32, 20.02);
+    /// let options = PrepareOptions::new().keep_nodes_within(&[area]);
+    /// # let _ = options;
+    /// ```
+    pub fn keep_nodes_within(mut self, boxes: &[DecimicroBox]) -> Self {
+        self.keep_nodes_within = Some(boxes.into());
+        self
+    }
+
     fn node_filter(&self) -> Option<TagFilter> {
         match (self.keep_node, self.legacy_keep_node) {
             (Some(keep_node), _) => Some(TagFilter::Borrowed(keep_node)),
             (None, Some(keep_node)) => Some(TagFilter::Owned(keep_node)),
-            (None, None) => None,
+            (None, None) => self.keep_nodes_within.as_ref().map(|_| TagFilter::All),
         }
     }
 }
@@ -105,8 +130,9 @@ pub struct PreparedIngestIndex {
     pub parent_relation_memberships: PackedRelationIndex,
     /// Ways that are members of a `type=multipolygon` relation.
     pub multipolygon_way_ids: RoaringTreemap,
-    /// The tagged nodes [`PrepareOptions::keep_nodes`] accepted, in file
-    /// order; empty without that filter.
+    /// The tagged nodes [`PrepareOptions::keep_nodes`] accepted, within
+    /// [`PrepareOptions::keep_nodes_within`], in file order; empty without
+    /// either.
     pub tagged_nodes: Vec<NormalizedNode>,
     pub metrics: PreparedIngestMetrics,
 }
@@ -263,9 +289,6 @@ where
     let node_strategy = options
         .node_store
         .unwrap_or_else(|| choose_node_store_strategy(pbf_bytes, build_profile.is_mobile()));
-    // Shared with the decode workers, which insert each block's nodes as they
-    // decode it; the collector never touches node locations.
-    let node_builder = Arc::new(NodeLocationStoreBuilder::new(node_strategy, temp_dir)?);
     let started = Instant::now();
 
     // On a file that does not declare `Sort.Type_then_ID` the classification
@@ -285,9 +308,10 @@ where
     );
 
     let keep_node = options.node_filter();
-    let worker_builder = Arc::clone(&node_builder);
+    let within = options.keep_nodes_within.clone();
     let mut collector = Collector {
         read_set_len: wanted_blobs.len(),
+        nodes: Some(NodeCollector::new(node_strategy, temp_dir)?),
         ..Collector::default()
     };
     let stream_started = Instant::now();
@@ -298,7 +322,7 @@ where
             worker_threads,
             queue_capacity: build_profile.queue_capacity(),
         },
-        move |block, inflated| decode_block(&block, inflated, keep_node, &worker_builder),
+        move |block, inflated| decode_block(&block, inflated, keep_node, within.as_deref()),
         &should_cancel,
         |chunk| collector.add(chunk, &mut on_progress),
     )?;
@@ -310,11 +334,12 @@ where
     if should_cancel() {
         return Err(INGEST_CANCELLED.to_string());
     }
-    // The pipeline has joined every worker, so this is the last reference.
-    let node_builder = Arc::try_unwrap(node_builder)
-        .map_err(|_| "Node-store builder is still shared after pass 1".to_string())?;
     let node_finalize_started = Instant::now();
-    let node_store = node_builder.finish()?;
+    let node_store = collector
+        .nodes
+        .take()
+        .ok_or_else(|| "Pass 1 lost its node store".to_string())?
+        .finish()?;
     let node_store_finalize_ms = node_finalize_started.elapsed().as_millis() as u64;
 
     let relation_finalize_started = Instant::now();
@@ -407,10 +432,11 @@ pub(crate) fn scan_blob_index(pbf_path: &Path) -> Result<PbfBlobIndex, String> {
     Ok(index)
 }
 
-/// What a decode worker makes of one block. Its node locations are already
-/// in the store.
+/// What a decode worker makes of one block.
 #[derive(Debug, Default)]
 struct Chunk {
+    /// The block's node locations, packed.
+    nodes: PackedRun,
     relations: Vec<NormalizedRelation>,
     /// `(way_id, relation_id)` for every way member.
     way_relation_pairs: Vec<(i64, i64)>,
@@ -430,14 +456,13 @@ fn decode_block(
     block: &RawBlock,
     inflated: &mut Vec<u8>,
     keep_node: Option<TagFilter>,
-    node_builder: &NodeLocationStoreBuilder,
+    within: Option<&[DecimicroBox]>,
 ) -> Result<Chunk, String> {
     let decode_started = Instant::now();
     let decoded = block.decode(inflated)?;
     let mut chunk = Chunk::default();
-    // `(node_id, encoded_lat_lng)`, sharded once the block is done so every
-    // shard bucket is allocated at its exact size.
-    let mut node_records: Vec<(i64, i64)> = Vec::new();
+    // `(node_id, decimicro_lat, decimicro_lon)`, packed once the block is done.
+    let mut node_records: Vec<(i64, i32, i32)> = Vec::new();
     let mut pairs: Vec<TagPair<'_>> = Vec::new();
 
     for group in decoded.groups() {
@@ -449,12 +474,14 @@ fn decode_block(
             keep_node.is_some(),
             &mut pairs,
             |node, pairs, repeat| {
-                node_records.push((
-                    node.id,
-                    encode_decimicro(node.decimicro_lat, node.decimicro_lon),
-                ));
+                node_records.push((node.id, node.decimicro_lat, node.decimicro_lon));
                 if let Some(keep_node) = keep_node
                     && !pairs.is_empty()
+                    && within.is_none_or(|boxes| {
+                        boxes
+                            .iter()
+                            .any(|area| area.contains(node.decimicro_lat, node.decimicro_lon))
+                    })
                     && let Some(tags) = keep_node.keep(pairs, repeat)
                 {
                     chunk.tagged_nodes.push(NormalizedNode::from_decimicro(
@@ -477,9 +504,98 @@ fn decode_block(
     chunk.decode_us = decode_started.elapsed().as_micros() as u64;
 
     let insert_started = Instant::now();
-    node_builder.push_chunk(NodeWorkerChunk::from_encoded(&node_records))?;
+    // Sorted files list a block's nodes by increasing ID. Otherwise the
+    // block's nodes are sorted here, keeping the first of a repeated ID.
+    if !node_records.windows(2).all(|pair| pair[0].0 < pair[1].0) {
+        node_records.sort_by_key(|record| record.0);
+        node_records.dedup_by_key(|record| record.0);
+    }
+    chunk.nodes = PackedRun::pack(&node_records);
     chunk.node_insert_us = insert_started.elapsed().as_micros() as u64;
     Ok(chunk)
+}
+
+/// Builds the node store from the packed runs, in file order: the packed
+/// store while each run's IDs follow the last one's, as in a file sorted by
+/// ID, and a sharded store, which sorts at the end, from the first run that
+/// does not.
+enum NodeCollector {
+    Packed {
+        builder: PackedStoreBuilder,
+        strategy: NodeStoreStrategy,
+        temp_dir: PathBuf,
+    },
+    Sharded(NodeLocationStoreBuilder),
+}
+
+impl NodeCollector {
+    fn new(strategy: NodeStoreStrategy, temp_dir: &Path) -> Result<Self, String> {
+        Ok(Self::Packed {
+            builder: match strategy {
+                NodeStoreStrategy::Ram => PackedStoreBuilder::ram(),
+                NodeStoreStrategy::Disk => PackedStoreBuilder::disk(temp_dir)?,
+            },
+            strategy,
+            temp_dir: temp_dir.to_path_buf(),
+        })
+    }
+
+    fn add(&mut self, run: PackedRun) -> Result<(), String> {
+        if run.is_empty() {
+            return Ok(());
+        }
+        let run = match self {
+            Self::Packed { builder, .. } => match builder.append(run)? {
+                Ok(()) => return Ok(()),
+                Err(run) => run,
+            },
+            Self::Sharded(builder) => return push_records(builder, &run.records()),
+        };
+        let Self::Packed {
+            builder,
+            strategy,
+            temp_dir,
+        } = std::mem::replace(self, Self::Sharded(placeholder_builder()?))
+        else {
+            unreachable!("matched above");
+        };
+        warn!(
+            "PBF node IDs are not sorted across blocks; building the sharded node store, \
+             which sorts them"
+        );
+        // Beside the packed file, which `drain` removes.
+        let sharded = NodeLocationStoreBuilder::new_in(
+            strategy,
+            temp_dir.join("node_store").join("sharded"),
+        )?;
+        builder.drain(|records| push_records(&sharded, records))?;
+        push_records(&sharded, &run.records())?;
+        *self = Self::Sharded(sharded);
+        Ok(())
+    }
+
+    fn finish(self) -> Result<NodeLocationStore, String> {
+        match self {
+            Self::Packed { builder, .. } => builder.finish().map(NodeLocationStore::Packed),
+            Self::Sharded(builder) => builder.finish(),
+        }
+    }
+}
+
+/// A RAM builder holding nothing, to stand in while a collector switches.
+fn placeholder_builder() -> Result<NodeLocationStoreBuilder, String> {
+    NodeLocationStoreBuilder::new_in(NodeStoreStrategy::Ram, PathBuf::new())
+}
+
+fn push_records(
+    builder: &NodeLocationStoreBuilder,
+    records: &[(i64, i32, i32)],
+) -> Result<(), String> {
+    let encoded = records
+        .iter()
+        .map(|&(node_id, lat, lon)| (node_id, encode_decimicro(lat, lon)))
+        .collect::<Vec<_>>();
+    builder.push_chunk(NodeWorkerChunk::from_encoded(&encoded))
 }
 
 impl Chunk {
@@ -510,6 +626,8 @@ impl Chunk {
 /// Gathers the chunks in file order.
 #[derive(Default)]
 struct Collector {
+    /// Taken by `finish`.
+    nodes: Option<NodeCollector>,
     relations: Vec<NormalizedRelation>,
     relation_input_order: Vec<i64>,
     way_relations: PackedRelationIndexBuilder,
@@ -538,6 +656,9 @@ impl Collector {
         chunk: Chunk,
         on_progress: &mut impl FnMut(SharedIngestProgress),
     ) -> Result<(), String> {
+        if let Some(nodes) = &mut self.nodes {
+            nodes.add(chunk.nodes)?;
+        }
         let relation_started = Instant::now();
         self.way_relations.extend(chunk.way_relation_pairs);
         self.parent_relations.extend(chunk.parent_relation_pairs);
@@ -584,8 +705,8 @@ impl Collector {
 mod tests {
     use super::*;
     use crate::test_pbf::{
-        TestRelation, TestRelationMember, header_frame_len, pbf_file, relation_block,
-        sorted_fixture, write_fixture,
+        TestNode, TestRelation, TestRelationMember, header_frame_len, node_block, pbf_file,
+        relation_block, sorted_fixture, write_fixture,
     };
     use osmpbfreader::osmformat::relation::MemberType;
 
@@ -723,6 +844,123 @@ mod tests {
     }
 
     #[test]
+    fn node_ids_out_of_order_across_blocks_fall_back_to_the_sharded_store() {
+        let node = |id, lat, lng| TestNode {
+            id,
+            lat,
+            lng,
+            tags: &[],
+        };
+        // Blocks out of order, a block out of order within itself, and an ID
+        // that two blocks repeat.
+        let blocks = [
+            node_block(&[node(10, 50.0, 19.0), node(11, 50.1, 19.1)]),
+            node_block(&[node(13, 50.3, 19.3), node(12, 50.2, 19.2)]),
+            node_block(&[node(1, 49.0, 18.0), node(2, 49.1, 18.1)]),
+            node_block(&[node(20, 51.0, 20.0), node(13, 50.3, 19.3)]),
+        ];
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = write_fixture(dir.path(), &pbf_file(false, &blocks));
+        let expected = [
+            (1, (49.0, 18.0)),
+            (2, (49.1, 18.1)),
+            (10, (50.0, 19.0)),
+            (11, (50.1, 19.1)),
+            (12, (50.2, 19.2)),
+            (13, (50.3, 19.3)),
+            (20, (51.0, 20.0)),
+        ];
+        for strategy in [NodeStoreStrategy::Ram, NodeStoreStrategy::Disk] {
+            let temp = dir.path().join(format!("{strategy:?}"));
+            std::fs::create_dir_all(&temp).expect("temp dir");
+            let prepared = prepare_ingest_index_with_options(
+                &path,
+                IngestBuildProfile::DesktopFull,
+                &temp,
+                PrepareOptions::new().node_store(strategy).worker_threads(2),
+                |_progress| {},
+                || false,
+            )
+            .expect("prepare ingest index");
+            let store = &prepared.node_store;
+            match strategy {
+                NodeStoreStrategy::Ram => assert!(matches!(store, NodeLocationStore::Ram(_))),
+                NodeStoreStrategy::Disk => {
+                    assert!(matches!(store, NodeLocationStore::Disk(_)));
+                    assert!(!temp.join("node_store").join("nodes.packed").exists());
+                }
+            }
+            assert_eq!(store.record_count(), expected.len() as u64);
+            let mut cursor = store.cursor();
+            for (id, (lat, lng)) in expected {
+                let found = store.get(id).expect("node in store");
+                assert!((found.0 - lat).abs() < 1e-9 && (found.1 - lng).abs() < 1e-9);
+                assert_eq!(cursor.get(id), Some(found));
+            }
+            assert_eq!(store.get(3), None);
+        }
+    }
+
+    #[test]
+    fn the_packed_store_answers_like_the_sharded_one() {
+        // Sorted blocks, as Geofabrik writes them: the packed store.
+        let blocks = (0..5i64)
+            .map(|block| {
+                let nodes = (0..300i64)
+                    .map(|index| {
+                        let id = block * 10_000 + index * 3 + 1;
+                        (id, 49.0 + id as f64 * 1e-6, 19.0 - id as f64 * 1e-6)
+                    })
+                    .collect::<Vec<_>>();
+                node_block(
+                    &nodes
+                        .iter()
+                        .map(|&(id, lat, lng)| TestNode {
+                            id,
+                            lat,
+                            lng,
+                            tags: &[],
+                        })
+                        .collect::<Vec<_>>(),
+                )
+            })
+            .collect::<Vec<_>>();
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = write_fixture(dir.path(), &pbf_file(true, &blocks));
+        let packed = prepare(&path, dir.path()).node_store;
+        assert!(matches!(packed, NodeLocationStore::Packed(_)));
+        // The same blocks in reverse, which only the sharded store takes.
+        let reversed = blocks.iter().rev().cloned().collect::<Vec<_>>();
+        let reversed_path = dir.path().join("reversed.osm.pbf");
+        std::fs::write(&reversed_path, pbf_file(false, &reversed)).expect("write");
+        let sharded_dir = dir.path().join("sharded");
+        std::fs::create_dir_all(&sharded_dir).expect("temp dir");
+        let sharded = prepare(&reversed_path, &sharded_dir).node_store;
+        assert!(!matches!(sharded, NodeLocationStore::Packed(_)));
+        assert_eq!(packed.record_count(), 1_500);
+        assert_eq!(sharded.record_count(), 1_500);
+        for id in -2..50_000 {
+            assert_eq!(packed.get(id), sharded.get(id), "node {id}");
+        }
+        let sample = packed.get(10_001);
+        // Both persist the same files.
+        let packed_out = dir.path().join("packed-out");
+        let sharded_out = dir.path().join("sharded-out");
+        packed.persist_to(&packed_out).expect("persist");
+        sharded.persist_to(&sharded_out).expect("persist");
+        for entry in std::fs::read_dir(&sharded_out).expect("read persisted store") {
+            let name = entry.expect("entry").file_name();
+            assert_eq!(
+                std::fs::read(packed_out.join(&name)).expect("packed file"),
+                std::fs::read(sharded_out.join(&name)).expect("sharded file"),
+                "{name:?} differs"
+            );
+        }
+        let reopened = NodeLocationStore::open_disk(&packed_out).expect("reopen");
+        assert_eq!(reopened.get(10_001), sample);
+    }
+
+    #[test]
     fn keeps_the_tagged_nodes_the_filter_accepts() {
         let dir = tempfile::tempdir().expect("temp dir");
         let path = write_fixture(dir.path(), &sorted_fixture());
@@ -752,6 +990,69 @@ mod tests {
     }
 
     #[test]
+    fn keep_nodes_within_keeps_the_tagged_nodes_inside_the_boxes() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let node = |id, lat, lng, tags| TestNode { id, lat, lng, tags };
+        let path = write_fixture(
+            dir.path(),
+            &pbf_file(
+                true,
+                &[node_block(&[
+                    node(1, 50.0, 19.0, &[("amenity", "cafe")]),
+                    node(2, 50.1, 19.1, &[]),
+                    node(3, 50.1, 19.1, &[("shop", "bakery")]),
+                    node(4, 51.0, 19.1, &[("amenity", "pub")]),
+                    node(5, 50.05, 21.0, &[("amenity", "bar")]),
+                ])],
+            ),
+        );
+        let keep = |options: PrepareOptions| {
+            prepare_ingest_index_with_options(
+                &path,
+                IngestBuildProfile::DesktopFull,
+                dir.path(),
+                options,
+                |_progress| {},
+                || false,
+            )
+            .expect("prepare ingest index")
+            .tagged_nodes
+            .into_iter()
+            .map(|node| node.node_id)
+            .collect::<Vec<_>>()
+        };
+        let around = DecimicroBox::around_degrees(49.9, 18.9, 50.2, 19.2);
+        let east = DecimicroBox::around_degrees(50.0, 20.9, 50.1, 21.1);
+        assert_eq!(
+            keep(PrepareOptions::new().keep_nodes_within(&[around])),
+            [1, 3]
+        );
+        assert_eq!(
+            keep(PrepareOptions::new().keep_nodes_within(&[around, east])),
+            [1, 3, 5]
+        );
+        assert_eq!(
+            keep(
+                PrepareOptions::new()
+                    .keep_nodes(|tags| tags.contains_key("amenity"))
+                    .keep_nodes_within(&[around, east])
+            ),
+            [1, 5]
+        );
+        // The store still holds every node.
+        let all = prepare_ingest_index_with_options(
+            &path,
+            IngestBuildProfile::DesktopFull,
+            dir.path(),
+            PrepareOptions::new().keep_nodes_within(&[east]),
+            |_progress| {},
+            || false,
+        )
+        .expect("prepare ingest index");
+        assert_eq!(all.node_store.record_count(), 5);
+    }
+
+    #[test]
     fn ram_and_disk_node_stores_give_the_same_pass1_result() {
         let dir = tempfile::tempdir().expect("temp dir");
         let path = write_fixture(dir.path(), &sorted_fixture());
@@ -767,11 +1068,12 @@ mod tests {
                 || false,
             )
             .expect("prepare ingest index");
-            assert!(matches!(
-                (&prepared.node_store, strategy),
-                (NodeLocationStore::Ram(_), NodeStoreStrategy::Ram)
-                    | (NodeLocationStore::Disk(_), NodeStoreStrategy::Disk)
-            ));
+            // A file sorted by ID gets the packed store, in RAM or on disk.
+            assert!(matches!(prepared.node_store, NodeLocationStore::Packed(_)));
+            assert_eq!(
+                temp.join("node_store").join("nodes.packed").exists(),
+                strategy == NodeStoreStrategy::Disk
+            );
             let lookups = (0..=5)
                 .map(|id| prepared.node_store.get(id))
                 .collect::<Vec<_>>();

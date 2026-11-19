@@ -1,4 +1,5 @@
 use crate::binary_layout::NodeShardRecord;
+pub use crate::packed_node_store::{DecimicroBox, PackedCursor, PackedNodeStore};
 use memmap2::Mmap;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -11,14 +12,14 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use zerocopy::{FromBytes, IntoBytes};
 
 const DEFAULT_SHARDS: usize = 64;
-/// Desktop builds keep the store in RAM up to this input size. A store costs
-/// 16 bytes per node and a Geofabrik extract holds about 0.125 nodes per PBF
-/// byte, so the RAM store is roughly twice the PBF. The disk store spills,
-/// reads back, sorts and rewrites every shard, which costs ~0.3 s on a 200 MiB
-/// extract where the RAM store's finalize takes ~35 ms, but keeps memory flat.
-/// The default stays small so mid-sized extracts don't silently grow peak
-/// RSS; callers with memory to spare pick RAM with
-/// `PrepareOptions::node_store`. Both persist byte-identical artifacts.
+/// Desktop builds keep the store in RAM up to this input size, and in a
+/// mapped file beyond it. On a file sorted by ID (every Geofabrik extract and
+/// the planet) pass 1 builds the packed store, about 6 bytes per node or 0.75
+/// bytes per PBF byte, in either place without sorting. Other files get the
+/// sharded stores, 16 bytes per node: the disk one spills, reads back, sorts
+/// and rewrites every shard. The default stays small so mid-sized extracts
+/// don't silently grow peak RSS; callers with memory to spare pick RAM with
+/// `PrepareOptions::node_store`. All of them persist byte-identical artifacts.
 const RAM_STORE_PBF_THRESHOLD_BYTES: u64 = 32 * 1024 * 1024;
 const MOBILE_RAM_STORE_PBF_THRESHOLD_BYTES: u64 = 24 * 1024 * 1024;
 /// Per-shard write buffer for the disk store. Decode workers append to the
@@ -69,10 +70,18 @@ pub fn choose_node_store_strategy(pbf_bytes: u64, mobile_operational: bool) -> N
     }
 }
 
+/// Pass 1 builds a [`NodeLocationStore::Packed`] store from a file sorted by
+/// ID, and falls back to the sharded `Ram` or `Disk` store otherwise.
+/// [`NodeLocationStore::open_disk`] opens a persisted store as `Disk`.
 #[derive(Debug)]
 pub enum NodeLocationStore {
+    /// Sharded by ID, 16 bytes a node, in RAM.
     Ram(PackedRamNodeStore),
+    /// Sharded by ID, 16 bytes a node, in mapped files.
     Disk(DiskSortedNodeStore),
+    /// Sorted by ID and packed, about 6 bytes a node, in RAM or a mapped
+    /// file as [`NodeStoreStrategy`] chose.
+    Packed(PackedNodeStore),
 }
 
 impl NodeLocationStore {
@@ -94,13 +103,40 @@ impl NodeLocationStore {
         match self {
             Self::Ram(store) => store.persist_to(dest_dir),
             Self::Disk(store) => store.persist_to(dest_dir),
+            Self::Packed(store) => persist_packed(&store, dest_dir),
         }
     }
 
+    /// The location of `node_id` in degrees, `(lat, lng)`.
     pub fn get(&self, node_id: i64) -> Option<(f64, f64)> {
         match self {
             Self::Ram(store) => store.get(node_id).map(decode_lat_lng),
             Self::Disk(store) => store.get(node_id).map(decode_lat_lng),
+            Self::Packed(store) => store
+                .get_decimicro(node_id)
+                .map(|(lat, lng)| decode_decimicro(lat, lng)),
+        }
+    }
+
+    /// A reader for runs of lookups, such as a way's nodes: it answers as
+    /// [`get`](Self::get) does, faster when consecutive IDs lie close
+    /// together, as they usually do within a way.
+    pub fn cursor(&self) -> NodeCursor<'_> {
+        match self {
+            Self::Packed(store) => NodeCursor::Packed(store.cursor()),
+            other => NodeCursor::Store(other),
+        }
+    }
+
+    /// Whether the nodes in `node_ids` that the store holds may lie in one of
+    /// `areas`. False only when none of them can; a true answer can be wrong,
+    /// so check the locations when it matters. The packed store answers from
+    /// the boxes of its blocks, several times faster than looking the nodes
+    /// up; the sharded stores always answer true.
+    pub fn may_touch(&self, node_ids: &[i64], areas: &[DecimicroBox]) -> bool {
+        match self {
+            Self::Packed(store) => store.may_touch(node_ids, areas),
+            _ => true,
         }
     }
 
@@ -127,8 +163,70 @@ impl NodeLocationStore {
         match self {
             Self::Ram(store) => store.shards.iter().map(|shard| shard.len() as u64).sum(),
             Self::Disk(store) => store.record_count(),
+            Self::Packed(store) => store.record_count(),
         }
     }
+}
+
+/// See [`NodeLocationStore::cursor`].
+pub enum NodeCursor<'a> {
+    Packed(PackedCursor<'a>),
+    Store(&'a NodeLocationStore),
+}
+
+impl NodeCursor<'_> {
+    /// The location of `node_id` in degrees, `(lat, lng)`, as
+    /// [`NodeLocationStore::get`] gives it.
+    #[inline]
+    pub fn get(&mut self, node_id: i64) -> Option<(f64, f64)> {
+        match self {
+            Self::Packed(cursor) => cursor
+                .get_decimicro(node_id)
+                .map(|(lat, lng)| decode_decimicro(lat, lng)),
+            Self::Store(store) => store.get(node_id),
+        }
+    }
+}
+
+/// Writes a packed store in the sharded layout. The packed store holds every
+/// node in ID order, so each shard's records arrive sorted.
+fn persist_packed(store: &PackedNodeStore, dest_dir: &Path) -> Result<NodeStoreManifest, String> {
+    if store.dir() == Some(dest_dir) {
+        return Err(format!(
+            "Cannot persist a node store into its own directory {dest_dir:?}"
+        ));
+    }
+    fs::create_dir_all(dest_dir)
+        .map_err(|error| format!("Failed to create {:?}: {}", dest_dir, error))?;
+    let mut writers = (0..DEFAULT_SHARDS)
+        .map(|shard| {
+            let path = shard_path(dest_dir, shard);
+            File::create(&path)
+                .map(|file| BufWriter::with_capacity(DISK_SHARD_BUFFER_BYTES, file))
+                .map_err(|error| format!("Failed to create {:?}: {}", path, error))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut failure = None;
+    store.for_each_block(|records| {
+        for &(node_id, lat, lon) in records {
+            let record = NodeShardRecord::new(node_id, encode_decimicro(lat, lon));
+            if let Err(error) = writers[shard_for_node(node_id)].write_all(record.as_bytes()) {
+                failure.get_or_insert(error);
+            }
+        }
+    });
+    if let Some(error) = failure {
+        return Err(format!(
+            "Failed to write node store to {dest_dir:?}: {error}"
+        ));
+    }
+    for mut writer in writers {
+        writer
+            .flush()
+            .map_err(|error| format!("Failed to write node store to {dest_dir:?}: {error}"))?;
+    }
+    write_node_store_manifest(dest_dir, store.record_count())?;
+    Ok(node_store_manifest(store.record_count()))
 }
 
 #[derive(Debug)]
@@ -218,6 +316,11 @@ enum BuilderInner {
 
 impl NodeLocationStoreBuilder {
     pub fn new(strategy: NodeStoreStrategy, temp_dir: &Path) -> Result<Self, String> {
+        Self::new_in(strategy, temp_dir.join("node_store"))
+    }
+
+    /// A builder whose disk store lives in `base_dir`.
+    pub(crate) fn new_in(strategy: NodeStoreStrategy, base_dir: PathBuf) -> Result<Self, String> {
         let inner = match strategy {
             NodeStoreStrategy::Ram => BuilderInner::Ram {
                 shards: (0..DEFAULT_SHARDS)
@@ -225,7 +328,7 @@ impl NodeLocationStoreBuilder {
                     .collect(),
             },
             NodeStoreStrategy::Disk => BuilderInner::Disk {
-                store: DiskSortedNodeStore::new(temp_dir)?,
+                store: DiskSortedNodeStore::new_in(base_dir)?,
             },
         };
         Ok(Self {
@@ -385,7 +488,11 @@ pub struct DiskSortedNodeStore {
 
 impl DiskSortedNodeStore {
     pub fn new(temp_dir: &Path) -> Result<Self, String> {
-        let base_dir = temp_dir.join("node_store");
+        Self::new_in(temp_dir.join("node_store"))
+    }
+
+    /// A store in `base_dir`, emptied first.
+    pub(crate) fn new_in(base_dir: PathBuf) -> Result<Self, String> {
         if base_dir.exists() {
             fs::remove_dir_all(&base_dir).map_err(|error| {
                 format!("Failed to reset node-store dir {:?}: {}", base_dir, error)
@@ -721,6 +828,12 @@ pub fn encode_decimicro(lat: i32, lng: i32) -> i64 {
     bytes[..4].copy_from_slice(&lat_fixed);
     bytes[4..].copy_from_slice(&lng_fixed);
     i64::from_be_bytes(bytes)
+}
+
+/// Degrees from 1e-7 degree units, exactly as [`decode_lat_lng`] converts.
+#[inline]
+pub fn decode_decimicro(lat: i32, lng: i32) -> (f64, f64) {
+    (lat as f64 / COORDINATE_SCALE, lng as f64 / COORDINATE_SCALE)
 }
 
 pub fn decode_lat_lng(encoded: i64) -> (f64, f64) {

@@ -128,17 +128,23 @@ impl<'a> Block<'a> {
     /// [`tag_pairs`](Self::tag_pairs).
     pub(crate) fn normalized_way(&self, way: &WayView<'a>, tags: Tags) -> NormalizedWay {
         let mut node_ids = Vec::with_capacity(way.refs.len());
-        let mut id = 0i64;
-        for delta in &way.refs {
-            id += delta;
-            node_ids.push(id);
-        }
+        self.way_node_ids(way, &mut node_ids);
         let is_closed = node_ids.len() >= 4 && node_ids.first() == node_ids.last();
         NormalizedWay {
             way_id: way.id,
             node_ids,
             tags,
             is_closed,
+        }
+    }
+
+    /// The way's node IDs, decoded into `node_ids`.
+    pub(crate) fn way_node_ids(&self, way: &WayView<'a>, node_ids: &mut Vec<i64>) {
+        node_ids.clear();
+        let mut id = 0i64;
+        for delta in &way.refs {
+            id += delta;
+            node_ids.push(id);
         }
     }
 

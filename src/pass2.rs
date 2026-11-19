@@ -5,6 +5,7 @@
 //! node store.
 
 use std::path::Path;
+use std::sync::Arc;
 use std::time::Instant;
 use tracing::{debug, info};
 
@@ -43,7 +44,7 @@ pub trait Pass2Sink {
 ///     .keep_ways(|tags| tags.contains_key("highway"));
 /// # let _ = options;
 /// ```
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Clone, Default)]
 #[non_exhaustive]
 pub struct Pass2Options {
     /// Decode workers. Defaults to the profile's worker count.
@@ -57,6 +58,38 @@ pub struct Pass2Options {
     /// It reads each way's tags borrowed from the block, so only the ways it
     /// accepts get owned [`Tags`].
     pub keep_way: Option<fn(&TagsRef<'_>) -> bool>,
+    /// Hand the sink only the ways this accepts too, judged with their ID
+    /// and node IDs as well as their tags. Defaults to every way.
+    pub keep_way_where: Option<Arc<WayFilter>>,
+}
+
+/// A filter for [`Pass2Options::keep_ways_where`]. It runs on the decode
+/// workers, several at once.
+pub type WayFilter = dyn Fn(&WayRef<'_>) -> bool + Send + Sync;
+
+/// A way as a [`WayFilter`] sees it, borrowed from its block.
+#[derive(Debug)]
+#[non_exhaustive]
+pub struct WayRef<'a> {
+    pub way_id: i64,
+    /// In file order, repeats included.
+    pub node_ids: &'a [i64],
+    pub tags: TagsRef<'a>,
+}
+
+impl std::fmt::Debug for Pass2Options {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("Pass2Options")
+            .field("worker_threads", &self.worker_threads)
+            .field("skip_nodes", &self.skip_nodes)
+            .field("keep_way", &self.keep_way)
+            .field(
+                "keep_way_where",
+                &self.keep_way_where.as_ref().map(|_| ".."),
+            )
+            .finish()
+    }
 }
 
 impl Pass2Options {
@@ -76,6 +109,31 @@ impl Pass2Options {
 
     pub fn keep_ways(mut self, keep_way: fn(&TagsRef<'_>) -> bool) -> Self {
         self.keep_way = Some(keep_way);
+        self
+    }
+
+    /// Hand the sink only the ways `keep` accepts, besides any
+    /// [`keep_ways`](Self::keep_ways) filter. Unlike that filter, `keep` can
+    /// hold state and sees each way's node IDs, so it can judge ways by
+    /// where they lie: with a [`NodeLocationStore`](crate::node_store::NodeLocationStore)
+    /// it can drop the ways outside an area before they get owned tags.
+    ///
+    /// ```
+    /// use osm_pbf_ingest::Pass2Options;
+    /// use std::collections::HashSet;
+    /// use std::sync::Arc;
+    ///
+    /// // Only the ways that reach one of these nodes.
+    /// let wanted: HashSet<i64> = [42, 43].into();
+    /// let options = Pass2Options::new()
+    ///     .skip_nodes()
+    ///     .keep_ways_where(Arc::new(move |way| {
+    ///         way.node_ids.iter().any(|id| wanted.contains(id))
+    ///     }));
+    /// # let _ = options;
+    /// ```
+    pub fn keep_ways_where(mut self, keep: Arc<WayFilter>) -> Self {
+        self.keep_way_where = Some(keep);
         self
     }
 }
@@ -131,6 +189,7 @@ where
         Selection {
             skip_nodes: true,
             keep_way: TagFilter::Owned(keep_way),
+            keep_way_where: None,
         },
         sink,
         on_progress,
@@ -186,6 +245,7 @@ where
         Selection {
             skip_nodes: options.skip_nodes,
             keep_way: options.keep_way.map_or(TagFilter::All, TagFilter::Borrowed),
+            keep_way_where: options.keep_way_where,
         },
         sink,
         on_progress,
@@ -194,11 +254,12 @@ where
 }
 
 /// Which objects pass 2 reads and hands to its sink.
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone)]
 struct Selection {
     /// Read only the blobs that hold ways or relations, and no nodes.
     skip_nodes: bool,
     keep_way: TagFilter,
+    keep_way_where: Option<Arc<WayFilter>>,
 }
 
 fn run<S, F, C>(
@@ -254,7 +315,7 @@ where
             worker_threads,
             queue_capacity: build_profile.queue_capacity(),
         },
-        move |block, inflated| decode_block(&block, inflated, selection),
+        move |block, inflated| decode_block(&block, inflated, &selection),
         &should_cancel,
         |block| emitter.emit(block),
     )?;
@@ -320,7 +381,7 @@ struct DecodedBlock {
 fn decode_block(
     block: &RawBlock,
     inflated: &mut Vec<u8>,
-    selection: Selection,
+    selection: &Selection,
 ) -> Result<DecodedBlock, String> {
     let decode_started = Instant::now();
     let decoded = block.decode(inflated)?;
@@ -328,6 +389,7 @@ fn decode_block(
     let mut ways = WayBatch::default();
     let mut relations = RelationBatch::default();
     let mut pairs: Vec<TagPair<'_>> = Vec::new();
+    let mut node_ids = Vec::new();
 
     for group in decoded.groups() {
         if !selection.skip_nodes {
@@ -346,6 +408,17 @@ fn decode_block(
         }
         for way in group.ways.iter() {
             decoded.tag_pairs(&way.keys, &way.vals, &mut pairs)?;
+            if let Some(keep) = &selection.keep_way_where {
+                decoded.way_node_ids(way, &mut node_ids);
+                let way = WayRef {
+                    way_id: way.id,
+                    node_ids: &node_ids,
+                    tags: TagsRef::new(&pairs, Repeat::FirstWins),
+                };
+                if !keep(&way) {
+                    continue;
+                }
+            }
             if let Some(tags) = selection.keep_way.keep(&pairs, Repeat::FirstWins) {
                 ways.push(decoded.normalized_way(way, tags));
             }
@@ -500,6 +573,68 @@ mod tests {
                 summary.relation_batches
             ),
             (1, 2, 1)
+        );
+    }
+
+    #[test]
+    fn keep_ways_where_sees_ids_node_ids_and_tags_and_combines_with_keep_ways() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = write_fixture(dir.path(), &sorted_fixture());
+        let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let record = Arc::clone(&seen);
+        let mut collected = Collected::default();
+        run_pass2_with_options(
+            &path,
+            IngestBuildProfile::DesktopFull,
+            Pass2Options::new()
+                .skip_nodes()
+                .keep_ways_where(Arc::new(move |way| {
+                    record.lock().unwrap().push((
+                        way.way_id,
+                        way.node_ids.to_vec(),
+                        way.tags.get("highway").map(str::to_string),
+                    ));
+                    way.node_ids.contains(&3)
+                })),
+            &mut collected,
+            |_progress| {},
+            || false,
+        )
+        .expect("pass 2");
+        assert_eq!(collected.way_ids, [100, 101]);
+        let mut seen = seen.lock().unwrap().clone();
+        seen.sort();
+        assert_eq!(
+            seen,
+            [
+                (100, vec![1, 2, 3], Some("residential".to_string())),
+                (101, vec![3, 4], None)
+            ]
+        );
+
+        let ways = |options: Pass2Options| {
+            let mut collected = Collected::default();
+            run_pass2_with_options(
+                &path,
+                IngestBuildProfile::DesktopFull,
+                options,
+                &mut collected,
+                |_progress| {},
+                || false,
+            )
+            .expect("pass 2");
+            collected.way_ids
+        };
+        let not_first =
+            || Pass2Options::new().keep_ways_where(Arc::new(|way| way.node_ids[0] != 1));
+        assert_eq!(ways(not_first()), [101]);
+        assert_eq!(
+            ways(not_first().keep_ways(|tags| !tags.is_empty())),
+            [] as [i64; 0]
+        );
+        assert_eq!(
+            ways(Pass2Options::new().keep_ways(|tags| !tags.is_empty())),
+            [100]
         );
     }
 
