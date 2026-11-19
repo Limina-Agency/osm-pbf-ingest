@@ -1,8 +1,6 @@
 # Changelog
 
-## Unreleased
-
-Breaking changes: the next release is 0.3.0.
+## 0.3.0 (2026-11-19)
 
 ### Packed node store
 
