@@ -21,8 +21,8 @@
 //! `DataBlobs` walks the same framing in order and yields each data blob's
 //! payload, for passes that read the whole file.
 
-use crate::osm_block::Block;
 use crate::osm_block::proto::OSMPBF::{BlobHeader, HeaderBlock};
+use crate::osm_block::{Block, Decoding, Group};
 use buffa::Message as _;
 use std::fmt;
 use std::fs::File;
@@ -605,9 +605,12 @@ fn blob_contents<R: Read + Seek>(
     let blob = read_blob_at(reader, location)?;
     let mut buffer = Vec::new();
     let bytes = blob_bytes(&blob, location.payload_offset, &mut buffer)?;
-    let block = Block::decode(bytes).map_err(|detail| PbfScanError::MalformedPrimitiveBlock {
-        offset: location.payload_offset,
-        detail,
+    // Ways are read from the wire, not decoded.
+    let block = Block::decode_with(bytes, Decoding::Wire).map_err(|detail| {
+        PbfScanError::MalformedPrimitiveBlock {
+            offset: location.payload_offset,
+            detail,
+        }
     })?;
 
     let mut contents = BlockContents {
@@ -615,7 +618,14 @@ fn blob_contents<R: Read + Seek>(
         has_ways: false,
         has_relations: false,
     };
-    for group in block.groups() {
+    for group in block.each_group() {
+        let group = match group {
+            Group::Ways(_) => {
+                contents.has_ways = true;
+                continue;
+            }
+            Group::View(group) => group,
+        };
         // Nodes arrive either as a repeated Node field or packed into a single
         // DenseNodes message; a block that uses dense encoding has an empty
         // `nodes` vector, so checking only that would miss almost every real

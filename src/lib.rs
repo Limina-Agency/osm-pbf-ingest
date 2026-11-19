@@ -68,7 +68,8 @@
 //! # Decoding
 //!
 //! Blocks are decoded with buffa views over a trimmed copy of the OSM schema
-//! (`proto/`). The blob framing uses the same generated code, and
+//! (`proto/`), except groups of ways, which pass 2 reads straight from the
+//! wire (`wire`). The blob framing uses the same generated code, and
 //! [`blob_index::read_blob_at`] returns its [`blob_index::Blob`], so a buffa
 //! release that changes generated messages is a breaking change for this
 //! crate.
@@ -80,6 +81,7 @@
 //! | `pass1`, `pass2` | the two passes: options, entry points, per-block decoding |
 //! | `pipeline` | the reader, decode-worker and in-order collector threads both passes run |
 //! | `osm_block` | decoding a `PrimitiveBlock` and walking its nodes, ways and relations |
+//! | `wire` | reading protobuf fields from the wire, for the groups `osm_block` reads that way |
 //! | `model`, `progress`, `profile`, `tags` | the types the passes hand out and take |
 //! | [`blob_index`] | the file's blob framing, and which blobs hold which object kinds |
 //! | [`node_store`] | the node-location stores pass 1 builds: packed (`packed_node_store`) for files sorted by ID, sharded otherwise |
@@ -106,6 +108,7 @@ pub mod relation_index;
 mod tags;
 #[cfg(test)]
 mod test_pbf;
+mod wire;
 
 pub use model::{
     NodeBatch, NormalizedNode, NormalizedRelation, NormalizedRelationMember, NormalizedWay,

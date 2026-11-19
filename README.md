@@ -139,7 +139,20 @@ let options = Pass2Options::new().skip_nodes().keep_ways(|tags| is_road(tags));
 `PrimitiveBlock`s are decoded with buffa views over `proto/osmformat.proto`,
 a copy of the OSM schema trimmed to the fields this crate reads: object
 metadata (`Info`, `DenseInfo`) and changesets are skipped without being
-parsed, and string tables and packed arrays are read in place. The generated code is checked in under `src/proto/`; after editing
+parsed, and string tables are read in place.
+
+A view decodes every packed array of every object into its own vector up
+front, which for a block of ways takes longer than inflating it. Pass 2 reads
+each way once, mostly to drop it, so it reads the groups of ways straight
+from the wire instead, one value at a time as it uses them (`wire`,
+`osm_block::PlainWay`); everything else, and ways not in the plain encoding
+every writer produces (an unpacked or split list, a group mixing kinds),
+still goes through a view, with the same results. Single-threaded, that
+takes inflating and reading the way blocks of the Małopolskie extract from
+1.25 s to 0.8 s, about half of it zlib. Pass 1 skips the groups of ways
+undecoded, which matters on files not sorted by type.
+
+The generated code is checked in under `src/proto/`; after editing
 the schema, regenerate it with `scripts/gen-proto.sh` (needs `protoc`). Blob
 framing and the file header use the same generated code, from
 `proto/fileformat.proto` and `proto/osmformat.proto`. `osmpbfreader` is only a
