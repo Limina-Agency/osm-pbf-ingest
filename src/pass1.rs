@@ -18,7 +18,7 @@ use crate::node_store::{
     NodeLocationStore, NodeLocationStoreBuilder, NodeStoreStrategy, NodeWorkerChunk,
     choose_node_store_strategy, encode_decimicro,
 };
-use crate::osm_block::{TagPair, for_each_node};
+use crate::osm_block::{Decoding, Group, TagPair, for_each_node};
 use crate::packed_node_store::{DecimicroBox, PackedRun, PackedStoreBuilder};
 use crate::pipeline::{self, BlobSource, PipelineConfig, RawBlock};
 use crate::profile::{IngestBuildProfile, validate_worker_count};
@@ -459,14 +459,16 @@ fn decode_block(
     within: Option<&[DecimicroBox]>,
 ) -> Result<Chunk, String> {
     let decode_started = Instant::now();
-    let decoded = block.decode(inflated)?;
+    // Pass 1 wants no ways: on a file not sorted by type, and in the blob
+    // where nodes give way to ways, their groups are skipped undecoded.
+    let decoded = block.decode_with(inflated, Decoding::WireWithoutWays)?;
     let mut chunk = Chunk::default();
     // `(node_id, decimicro_lat, decimicro_lon)`, packed once the block is done.
     let mut node_records: Vec<(i64, i32, i32)> = Vec::new();
     let mut pairs: Vec<TagPair<'_>> = Vec::new();
 
-    for group in decoded.groups() {
-        node_records.reserve(group.nodes.len() + group.dense.id.len());
+    for group in decoded.each_group() {
+        node_records.reserve(group.node_count());
         // Tags are only resolved when a filter will read them.
         for_each_node(
             &decoded,
@@ -494,6 +496,9 @@ fn decode_block(
                 Ok(())
             },
         )?;
+        let Group::View(group) = group else {
+            continue;
+        };
         for relation in group.relations.iter() {
             let relation = decoded.normalized_relation(relation, &mut pairs)?;
             chunk.index_members(&relation)?;

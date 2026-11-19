@@ -30,13 +30,18 @@ pub(crate) mod proto {
     include!("proto/mod.rs");
 }
 
+use crate::wire::{self, Packed, Value};
 use proto::OSMPBF::__buffa::view::{
-    DenseNodesView, NodeView, PrimitiveBlockView, PrimitiveGroupView, RelationView, WayView,
+    DenseNodesView, NodeView, PrimitiveBlockView, PrimitiveGroupView, RelationView,
+    StringTableView, WayView,
 };
 
 /// A decoded block and the per-block values its objects are read against.
 pub(crate) struct Block<'a> {
     view: PrimitiveBlockView<'a>,
+    /// Every group in wire order: those in `view.primitivegroup`, and those
+    /// read from the wire (see [`Decoding`]).
+    slots: Vec<Slot<'a>>,
     granularity: i64,
     lat_offset: i64,
     lon_offset: i64,
@@ -45,24 +50,137 @@ pub(crate) struct Block<'a> {
     strings: OnceCell<Vec<Cow<'a, str>>>,
 }
 
+/// How [`Block::decode_with`] decodes a block's groups.
+///
+/// A buffa view decodes every packed field of every object into its own
+/// `Vec` up front: for a block of ways, that takes longer than inflating it.
+/// Pass 2 reads each way once, mostly to drop it, so it reads the ways'
+/// fields straight from the wire when it uses them. (Dense nodes gain
+/// nothing from it: their few long arrays decode about as fast either way.)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Decoding {
+    /// Every group into a view: [`Block::groups`] holds them all.
+    Views,
+    /// Groups of ways from the wire, when plainly encoded, as every PBF
+    /// writer does; the rest into views.
+    Wire,
+    /// As [`Wire`](Self::Wire), leaving the way groups out: for a pass that
+    /// wants no ways.
+    WireWithoutWays,
+}
+
+enum Slot<'a> {
+    /// `view.primitivegroup[index]`.
+    View(usize),
+    Ways(Vec<PlainWay<'a>>),
+}
+
+/// A group of a block, as [`Block::each_group`] hands it out.
+#[derive(Clone, Copy)]
+pub(crate) enum Group<'b, 'a> {
+    View(&'b PrimitiveGroupView<'a>),
+    /// A group of plainly encoded ways, read from the wire.
+    Ways(&'b [PlainWay<'a>]),
+}
+
+impl Group<'_, '_> {
+    /// How many nodes the group holds, or a little more.
+    pub(crate) fn node_count(&self) -> usize {
+        match self {
+            Self::View(group) => group.nodes.len() + group.dense.id.len(),
+            Self::Ways(_) => 0,
+        }
+    }
+}
+
 /// One tag key/value pair, borrowed from a block's string table.
 pub(crate) type TagPair<'s> = (&'s str, &'s str);
 
 impl<'a> Block<'a> {
     pub(crate) fn decode(bytes: &'a [u8]) -> Result<Self, String> {
+        Self::decode_with(bytes, Decoding::Views)
+    }
+
+    /// Decodes a block's groups as `decoding` says. Read them with
+    /// [`each_group`](Self::each_group); with [`Decoding::Views`],
+    /// [`groups`](Self::groups) has them all too.
+    pub(crate) fn decode_with(bytes: &'a [u8], decoding: Decoding) -> Result<Self, String> {
+        if decoding != Decoding::Views
+            && let Ok(block) = Self::decode_from_wire(bytes, decoding)
+        {
+            return Ok(block);
+        }
         let view = PrimitiveBlockView::decode_view(bytes)
             .map_err(|error| format!("malformed PrimitiveBlock: {error}"))?;
-        Ok(Self {
+        let slots = (0..view.primitivegroup.len()).map(Slot::View).collect();
+        Ok(Self::from_view(view, slots))
+    }
+
+    fn from_view(view: PrimitiveBlockView<'a>, slots: Vec<Slot<'a>>) -> Self {
+        Self {
             granularity: i64::from(view.granularity.unwrap_or(100)),
             lat_offset: view.lat_offset.unwrap_or(0),
             lon_offset: view.lon_offset.unwrap_or(0),
             view,
+            slots,
             strings: OnceCell::new(),
-        })
+        }
     }
 
+    /// Reads the block's top level from the wire, keeps its plain way groups
+    /// as they are, and decodes the other groups into views.
+    /// Anything but the plain encoding of the top level is
+    /// [`Unusual`](wire::Unusual), and the caller decodes the whole view,
+    /// which also reports a malformed block as such.
+    fn decode_from_wire(bytes: &'a [u8], decoding: Decoding) -> Result<Self, wire::Unusual> {
+        let mut view = PrimitiveBlockView::default();
+        let mut stringtable = None;
+        let mut groups = Vec::new();
+        wire::for_each_field(bytes, |field, value| {
+            match (field, value) {
+                (1, Value::Bytes(table)) if stringtable.is_none() => stringtable = Some(table),
+                (2, Value::Bytes(group)) => groups.push(group),
+                // `int32` keeps a varint's low 32 bits, as buffa does.
+                (17, Value::Varint(granularity)) => view.granularity = Some(granularity as i32),
+                (19, Value::Varint(offset)) => view.lat_offset = Some(offset as i64),
+                (20, Value::Varint(offset)) => view.lon_offset = Some(offset as i64),
+                (1 | 2 | 17 | 19 | 20, _) => return Err(wire::Unusual),
+                _ => {}
+            }
+            Ok(())
+        })?;
+        if let Some(table) = stringtable {
+            view.stringtable = buffa::MessageFieldView::set(
+                StringTableView::decode_view(table).map_err(|_| wire::Unusual)?,
+            );
+        }
+        let mut decoded = Vec::new();
+        let mut slots = Vec::with_capacity(groups.len());
+        for group in groups {
+            if let Some(ways) = PlainWay::group(group)? {
+                if decoding != Decoding::WireWithoutWays {
+                    slots.push(Slot::Ways(ways));
+                }
+            } else {
+                slots.push(Slot::View(decoded.len()));
+                decoded.push(PrimitiveGroupView::decode_view(group).map_err(|_| wire::Unusual)?);
+            }
+        }
+        view.primitivegroup = buffa::RepeatedView::new(decoded);
+        Ok(Self::from_view(view, slots))
+    }
+
+    /// The groups decoded into views: every group with [`Decoding::Views`].
     pub(crate) fn groups(&self) -> &[PrimitiveGroupView<'a>] {
         &self.view.primitivegroup
+    }
+
+    /// Every group the block was decoded with, in wire order.
+    pub(crate) fn each_group(&self) -> impl Iterator<Item = Group<'_, 'a>> {
+        self.slots.iter().map(|slot| match slot {
+            Slot::View(index) => Group::View(&self.view.primitivegroup[*index]),
+            Slot::Ways(ways) => Group::Ways(ways),
+        })
     }
 
     /// A latitude in units of 1e-7 degrees, as `osmpbfreader::Node` stores it.
@@ -119,6 +237,21 @@ impl<'a> Block<'a> {
     ) -> Result<(), String> {
         pairs.clear();
         for (key, value) in keys.iter().copied().zip(vals.iter().copied()) {
+            pairs.push((self.string(i64::from(key))?, self.string(i64::from(value))?));
+        }
+        Ok(())
+    }
+
+    /// [`tag_pairs`](Self::tag_pairs) for a [`PlainWay`].
+    pub(crate) fn plain_tag_pairs<'s>(
+        &'s self,
+        way: &PlainWay<'a>,
+        pairs: &mut Vec<TagPair<'s>>,
+    ) -> Result<(), String> {
+        pairs.clear();
+        for (key, value) in Packed::new(way.keys).zip(Packed::new(way.vals)) {
+            // `uint32` fields keep a varint's low 32 bits, as buffa does.
+            let (key, value) = (key? as u32, value? as u32);
             pairs.push((self.string(i64::from(key))?, self.string(i64::from(value))?));
         }
         Ok(())
@@ -196,6 +329,128 @@ impl<'a> Block<'a> {
     }
 }
 
+/// Collects the packed lists of one message, noting whether each came as
+/// one packed field, the plain encoding.
+struct PackedLists {
+    /// Bit `field` set for each list seen.
+    seen: u32,
+    plain: bool,
+}
+
+impl Default for PackedLists {
+    fn default() -> Self {
+        Self {
+            seen: 0,
+            plain: true,
+        }
+    }
+}
+
+impl PackedLists {
+    /// Puts list `field` (below 32) in `slot`. A list split over several
+    /// fields or sent unpacked is valid protobuf, but not plain.
+    fn take<'a>(&mut self, field: u32, value: Value<'a>, slot: &mut &'a [u8]) {
+        let bit = 1u32 << field;
+        match value {
+            Value::Bytes(packed) if self.seen & bit == 0 && wire::packed_ends_cleanly(packed) => {
+                *slot = packed;
+            }
+            _ => self.plain = false,
+        }
+        self.seen |= bit;
+    }
+}
+
+/// A way of a plain way group, its packed fields still wire bytes: a buffa
+/// view would decode all three into vectors up front, which costs pass 2 more
+/// than everything else it does with the way.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct PlainWay<'a> {
+    pub id: i64,
+    keys: &'a [u8],
+    vals: &'a [u8],
+    refs: &'a [u8],
+}
+
+impl<'a> PlainWay<'a> {
+    /// The ways of `group` when it holds only ways, each plainly encoded;
+    /// `None` when it holds anything else or a way is encoded otherwise
+    /// (unpacked or split lists), for the caller to decode the group's view.
+    fn group(group: &'a [u8]) -> Result<Option<Vec<Self>>, wire::Unusual> {
+        let mut ways = Vec::new();
+        let mut plain = true;
+        wire::for_each_field(group, |field, value| {
+            match (field, value) {
+                (3, Value::Bytes(way)) if plain => match Self::parse(way)? {
+                    Some(way) => ways.push(way),
+                    None => plain = false,
+                },
+                _ => plain = false,
+            }
+            Ok(())
+        })?;
+        Ok((plain && !ways.is_empty()).then_some(ways))
+    }
+
+    fn parse(bytes: &'a [u8]) -> Result<Option<Self>, wire::Unusual> {
+        let mut way = Self {
+            id: 0,
+            keys: &[],
+            vals: &[],
+            refs: &[],
+        };
+        let mut lists = PackedLists::default();
+        wire::for_each_field(bytes, |field, value| {
+            let slot = match (field, value) {
+                // A repeated `id` keeps the last, as protobuf does.
+                (1, Value::Varint(id)) => {
+                    way.id = id as i64;
+                    return Ok(());
+                }
+                (1, _) => {
+                    lists.plain = false;
+                    return Ok(());
+                }
+                (2, _) => &mut way.keys,
+                (3, _) => &mut way.vals,
+                (8, _) => &mut way.refs,
+                // Metadata and fields the schema leaves out.
+                _ => return Ok(()),
+            };
+            lists.take(field, value, slot);
+            Ok(())
+        })?;
+        Ok(lists.plain.then_some(way))
+    }
+
+    /// The way's node IDs, decoded into `node_ids`.
+    pub(crate) fn node_ids(&self, node_ids: &mut Vec<i64>) -> Result<(), String> {
+        node_ids.clear();
+        let mut id = 0i64;
+        for delta in Packed::new(self.refs) {
+            id = id.wrapping_add(wire::zigzag(delta?));
+            node_ids.push(id);
+        }
+        Ok(())
+    }
+
+    /// The way, normalized, with the owned `tags` built from its
+    /// [`Block::plain_tag_pairs`].
+    pub(crate) fn normalized(&self, tags: Tags) -> Result<NormalizedWay, String> {
+        // At its exact size: one varint ends at each byte below 0x80.
+        let count = self.refs.iter().filter(|&&byte| byte < 0x80).count();
+        let mut node_ids = Vec::with_capacity(count);
+        self.node_ids(&mut node_ids)?;
+        let is_closed = node_ids.len() >= 4 && node_ids.first() == node_ids.last();
+        Ok(NormalizedWay {
+            way_id: self.id,
+            node_ids,
+            tags,
+            is_closed,
+        })
+    }
+}
+
 /// One node of a group, simple or dense, with its tag pairs when the caller
 /// asked for them.
 pub(crate) struct NodeEntry {
@@ -213,11 +468,15 @@ pub(crate) struct NodeEntry {
 /// resolves, which differs between the two encodings in `osmpbfreader`.
 pub(crate) fn for_each_node<'s, 'a>(
     block: &'s Block<'a>,
-    group: &'s PrimitiveGroupView<'a>,
+    group: Group<'s, 'a>,
     with_tags: bool,
     pairs: &mut Vec<TagPair<'s>>,
     mut visit: impl FnMut(NodeEntry, &[TagPair<'s>], Repeat) -> Result<(), String>,
 ) -> Result<(), String> {
+    let group = match group {
+        Group::View(group) => group,
+        Group::Ways(_) => return Ok(()),
+    };
     for node in group.nodes.iter() {
         pairs.clear();
         if with_tags {
@@ -397,17 +656,59 @@ mod tests {
         block
     }
 
+    /// The group's ways, normalized, whichever way it was decoded.
+    fn normalized_ways<'s, 'a>(block: &'s Block<'a>, group: Group<'s, 'a>) -> Vec<NormalizedWay> {
+        let mut pairs = Vec::new();
+        match group {
+            Group::View(group) => group
+                .ways
+                .iter()
+                .map(|way| {
+                    block
+                        .tag_pairs(&way.keys, &way.vals, &mut pairs)
+                        .expect("way tags");
+                    let tags = TagsRef::new(&pairs, Repeat::FirstWins).to_tags();
+                    block.normalized_way(way, tags)
+                })
+                .collect(),
+            Group::Ways(ways) => ways
+                .iter()
+                .map(|way| {
+                    block.plain_tag_pairs(way, &mut pairs).expect("way tags");
+                    let tags = TagsRef::new(&pairs, Repeat::FirstWins).to_tags();
+                    way.normalized(tags).expect("way node IDs")
+                })
+                .collect(),
+        }
+    }
+
     #[test]
     fn nodes_ways_and_relations_match_osmpbfreader() {
         let expected = awkward_block();
         let bytes = expected.write_to_bytes().expect("encode block");
-        let block = Block::decode(&bytes).expect("decode block");
-        assert_eq!(block.groups().len(), expected.primitivegroup.len());
+        for decoding in [Decoding::Views, Decoding::Wire] {
+            let block = Block::decode_with(&bytes, decoding).expect("decode block");
+            let groups = block.each_group().collect::<Vec<_>>();
+            assert_eq!(groups.len(), expected.primitivegroup.len());
+            if decoding == Decoding::Wire {
+                // The ways come from the wire.
+                assert!(matches!(groups[0], Group::View(_)));
+                assert!(matches!(groups[2], Group::Ways(_)));
+                assert!(matches!(groups[3], Group::View(_)));
+            }
+            check_groups(&block, &groups, &expected);
+        }
+    }
 
-        for (group, expected_group) in block.groups().iter().zip(&expected.primitivegroup) {
+    fn check_groups<'s, 'a>(
+        block: &'s Block<'a>,
+        groups: &[Group<'s, 'a>],
+        expected: &PrimitiveBlock,
+    ) {
+        for (&group, expected_group) in groups.iter().zip(&expected.primitivegroup) {
             let mut pairs = Vec::new();
             let mut found = Vec::new();
-            for_each_node(&block, group, true, &mut pairs, |node, pairs, repeat| {
+            for_each_node(block, group, true, &mut pairs, |node, pairs, repeat| {
                 found.push((
                     node.id,
                     node.decimicro_lat,
@@ -417,8 +718,8 @@ mod tests {
                 Ok(())
             })
             .expect("walk nodes");
-            let wanted = groups::simple_nodes(expected_group, &expected)
-                .chain(groups::dense_nodes(expected_group, &expected))
+            let wanted = groups::simple_nodes(expected_group, expected)
+                .chain(groups::dense_nodes(expected_group, expected))
                 .map(|node| (node.id.0, node.decimicro_lat, node.decimicro_lon, node.tags))
                 .collect::<Vec<_>>();
             assert_eq!(found.len(), wanted.len());
@@ -435,7 +736,7 @@ mod tests {
 
             // Without tags the walk visits the same nodes and resolves nothing.
             let mut untagged = Vec::new();
-            for_each_node(&block, group, false, &mut pairs, |node, pairs, _| {
+            for_each_node(block, group, false, &mut pairs, |node, pairs, _| {
                 assert!(pairs.is_empty());
                 untagged.push(node.id);
                 Ok(())
@@ -446,16 +747,11 @@ mod tests {
                 wanted.iter().map(|node| node.0).collect::<Vec<_>>()
             );
 
-            for (way, expected_way) in group
-                .ways
-                .iter()
-                .zip(groups::ways(expected_group, &expected))
+            let ways = normalized_ways(block, group);
+            assert_eq!(ways.len(), expected_group.ways.len());
+            for (normalized, expected_way) in
+                ways.iter().zip(groups::ways(expected_group, expected))
             {
-                block
-                    .tag_pairs(&way.keys, &way.vals, &mut pairs)
-                    .expect("way tags");
-                let tags = TagsRef::new(&pairs, Repeat::FirstWins).to_tags();
-                let normalized = block.normalized_way(way, tags);
                 assert_eq!(normalized.way_id, expected_way.id.0);
                 let node_ids = expected_way.nodes.iter().map(|id| id.0).collect::<Vec<_>>();
                 assert_eq!(normalized.node_ids, node_ids);
@@ -465,9 +761,12 @@ mod tests {
                 );
                 assert!(same_as_osmpbfreader(&normalized.tags, &expected_way.tags));
             }
-            assert_eq!(group.ways.len(), expected_group.ways.len());
 
-            let relations = groups::relations(expected_group, &expected).collect::<Vec<_>>();
+            let relations = groups::relations(expected_group, expected).collect::<Vec<_>>();
+            let Group::View(group) = group else {
+                assert!(relations.is_empty());
+                continue;
+            };
             assert_eq!(group.relations.len(), relations.len());
             for (relation, expected_relation) in group.relations.iter().zip(relations) {
                 let normalized = block
@@ -546,5 +845,126 @@ mod tests {
         let block = Block::decode(&bytes).expect("decode block with metadata");
         assert_eq!(block.groups()[2].ways[0].id, 100);
         assert_eq!(block.groups()[0].dense.id.len(), 6);
+        // Read from the wire, the metadata is skipped too.
+        let wire = Block::decode_with(&bytes, Decoding::Wire).expect("decode from the wire");
+        let groups = wire.each_group().collect::<Vec<_>>();
+        assert!(matches!(groups[2], Group::Ways(_)));
+        check_groups(&wire, &groups, &expected);
+    }
+
+    /// Appends field `field` holding `bytes`, length-delimited.
+    fn put_bytes(out: &mut Vec<u8>, field: u32, bytes: &[u8]) {
+        put_varint(out, u64::from(field << 3 | 2));
+        put_varint(out, bytes.len() as u64);
+        out.extend_from_slice(bytes);
+    }
+
+    fn put_varint(out: &mut Vec<u8>, mut value: u64) {
+        while value >= 0x80 {
+            out.push(value as u8 | 0x80);
+            value >>= 7;
+        }
+        out.push(value as u8);
+    }
+
+    /// Re-encodes the awkward block's groups as `edit` changes their bytes.
+    fn edited_block(edit: impl Fn(usize, &[u8]) -> Vec<u8>) -> (PrimitiveBlock, Vec<u8>) {
+        let expected = awkward_block();
+        let mut bytes = Vec::new();
+        let strings = expected
+            .stringtable
+            .write_to_bytes()
+            .expect("encode strings");
+        put_bytes(&mut bytes, 1, &strings);
+        for (index, group) in expected.primitivegroup.iter().enumerate() {
+            let group = group.write_to_bytes().expect("encode group");
+            put_bytes(&mut bytes, 2, &edit(index, &group));
+        }
+        for (field, value) in [
+            (17u32, i64::from(expected.granularity())),
+            (19, expected.lat_offset()),
+            (20, expected.lon_offset()),
+        ] {
+            put_varint(&mut bytes, u64::from(field << 3));
+            put_varint(&mut bytes, value as u64);
+        }
+        (expected, bytes)
+    }
+
+    #[test]
+    fn groups_encoded_otherwise_are_decoded_into_views() {
+        // The way group with each way's refs split over two packed fields,
+        // which protobuf reads as one list.
+        let split_refs = |index: usize, group: &[u8]| {
+            if index != 2 {
+                return group.to_vec();
+            }
+            let ways = PrimitiveGroup::parse_from_bytes(group)
+                .expect("way group")
+                .ways;
+            let mut out = Vec::new();
+            for way in ways {
+                let mut bytes = Vec::new();
+                put_varint(&mut bytes, 1 << 3);
+                put_varint(&mut bytes, way.id() as u64);
+                for (field, list) in [(2, &way.keys), (3, &way.vals)] {
+                    let mut packed = Vec::new();
+                    list.iter()
+                        .for_each(|&value| put_varint(&mut packed, u64::from(value)));
+                    put_bytes(&mut bytes, field, &packed);
+                }
+                let half = way.refs.len() / 2;
+                for part in [&way.refs[..half], &way.refs[half..]] {
+                    let mut packed = Vec::new();
+                    for &delta in part {
+                        put_varint(&mut packed, ((delta << 1) ^ (delta >> 63)) as u64);
+                    }
+                    put_bytes(&mut bytes, 8, &packed);
+                }
+                put_bytes(&mut out, 3, &bytes);
+            }
+            out
+        };
+        // The ways and the relation in one group.
+        let merged = |index: usize, group: &[u8]| match index {
+            2 => [
+                group,
+                &awkward_block().primitivegroup[3].write_to_bytes().unwrap(),
+            ]
+            .concat(),
+            _ => group.to_vec(),
+        };
+        let (expected, bytes) = edited_block(split_refs);
+        let block = Block::decode_with(&bytes, Decoding::Wire).expect("decode");
+        let groups = block.each_group().collect::<Vec<_>>();
+        assert!(matches!(groups[2], Group::View(_)));
+        check_groups(&block, &groups, &expected);
+
+        let (mut expected, bytes) = edited_block(merged);
+        let relations = expected.primitivegroup[3].relations.clone();
+        expected.primitivegroup[2].relations = relations;
+        let block = Block::decode_with(&bytes, Decoding::Wire).expect("decode");
+        let groups = block.each_group().collect::<Vec<_>>();
+        assert!(matches!(groups[2], Group::View(_)));
+        check_groups(&block, &groups, &expected);
+    }
+
+    #[test]
+    fn way_groups_can_be_left_out() {
+        let bytes = awkward_block().write_to_bytes().expect("encode block");
+        let block = Block::decode_with(&bytes, Decoding::WireWithoutWays).expect("decode");
+        let groups = block.each_group().collect::<Vec<_>>();
+        assert_eq!(groups.len(), 3);
+        assert!(groups.iter().all(|group| !matches!(group, Group::Ways(_))));
+    }
+
+    #[test]
+    fn a_malformed_block_read_from_the_wire_is_an_error() {
+        let mut bytes = awkward_block().write_to_bytes().expect("encode block");
+        bytes.truncate(bytes.len() - 3);
+        let error = Block::decode_with(&bytes, Decoding::Wire)
+            .err()
+            .expect("truncated block");
+        assert!(error.contains("malformed PrimitiveBlock"), "{error}");
     }
 }

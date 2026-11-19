@@ -11,7 +11,7 @@ use tracing::{debug, info};
 
 use crate::blob_index::ObjectKind;
 use crate::model::{NodeBatch, NormalizedNode, RelationBatch, WayBatch};
-use crate::osm_block::{TagPair, for_each_node};
+use crate::osm_block::{Decoding, Group, TagPair, for_each_node};
 use crate::pass1::scan_blob_index;
 use crate::pipeline::{self, BlobSource, PipelineConfig, RawBlock};
 use crate::profile::{IngestBuildProfile, validate_worker_count};
@@ -421,14 +421,14 @@ fn decode_block(
     selection: &Selection,
 ) -> Result<DecodedBlock, String> {
     let decode_started = Instant::now();
-    let decoded = block.decode(inflated)?;
+    let decoded = block.decode_with(inflated, Decoding::Wire)?;
     let mut nodes = NodeBatch::default();
     let mut ways = WayBatch::default();
     let mut relations = RelationBatch::default();
     let mut pairs: Vec<TagPair<'_>> = Vec::new();
     let mut node_ids = Vec::new();
 
-    for group in decoded.groups() {
+    for group in decoded.each_group() {
         if !selection.skip_nodes {
             // Only tagged nodes are handed out; their locations are pass 1's.
             for_each_node(&decoded, group, true, &mut pairs, |node, pairs, repeat| {
@@ -443,6 +443,29 @@ fn decode_block(
                 Ok(())
             })?;
         }
+        let group = match group {
+            Group::Ways(plain) => {
+                for way in plain {
+                    decoded.plain_tag_pairs(way, &mut pairs)?;
+                    if let Some(keep) = &selection.keep_way_where {
+                        way.node_ids(&mut node_ids)?;
+                        let way = WayRef {
+                            way_id: way.id,
+                            node_ids: &node_ids,
+                            tags: TagsRef::new(&pairs, Repeat::FirstWins),
+                        };
+                        if !keep(&way) {
+                            continue;
+                        }
+                    }
+                    if let Some(tags) = selection.keep_way.keep(&pairs, Repeat::FirstWins) {
+                        ways.push(way.normalized(tags)?);
+                    }
+                }
+                continue;
+            }
+            Group::View(group) => group,
+        };
         for way in group.ways.iter() {
             decoded.tag_pairs(&way.keys, &way.vals, &mut pairs)?;
             if let Some(keep) = &selection.keep_way_where {
