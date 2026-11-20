@@ -1,0 +1,79 @@
+name: Nightly
+
+# Checks too slow, too broad or too dependent on the outside world for every
+# pull request, on GitHub's hosted runners. A failure here does not block
+# anything; GitHub mails it to whoever last changed this schedule.
+
+on:
+  schedule:
+    - cron: "47 2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Actions are pinned by commit; the comment names the tag.
+jobs:
+  # Clippy and the tests on the platforms CI's pull request job leaves out.
+  platforms:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2025, macos-15]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - run: git config --global core.autocrlf false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+      - run: cargo clippy --all-targets --locked -- -D warnings
+      - run: cargo test --locked
+
+  # The newest versions of every dependency that Cargo.toml allows, as a new
+  # project that adds this crate would resolve them, rather than Cargo.lock's.
+  latest-dependencies:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: rustup toolchain install
+      - run: cargo update --verbose
+      - run: cargo test
+
+  # The lowest versions Cargo.toml allows for the direct dependencies: a
+  # requirement set lower than what the code needs passes CI with Cargo.lock
+  # but breaks a user whose lockfile holds an older version.
+  minimal-versions:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: |
+          rustup toolchain install
+          rustup toolchain install nightly --profile minimal
+      - run: cargo +nightly update -Z direct-minimal-versions
+      - run: cargo test
+
+  # The next Rust release, about six weeks early. Tests only: clippy's new
+  # lints wait for the deliberate bump in rust-toolchain.toml.
+  beta:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: rustup toolchain install beta --profile minimal
+      - run: cargo +beta test --locked
+
+  # The oldest Rust the crate declares (`rust-version`); rust-toolchain.toml
+  # pins a newer one for everything else.
+  msrv:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: rustup toolchain install 1.95 --profile minimal
+      - run: cargo +1.95 check --all-targets --locked
