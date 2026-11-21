@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.5.0 (2026-11-21)
+
+### Ways first: no node store
+
+- New `locate_nodes` reads the node blobs once and returns the locations of a
+  given set of node IDs (any order, repeats allowed), kept in memory in ID
+  order at 16 bytes per ID, plus the tagged nodes `LocateOptions::keep_nodes`
+  accepts, exactly as pass 1 keeps them. A caller that reads its ways first
+  (pass 2 with `skip_nodes`) knows which nodes it needs and no longer needs
+  pass 1: no node store, no relation index and no scratch files. A repeated
+  node keeps its first location in file order, so files not sorted by ID work
+  too. On Poland it locates the 40.2 M of 247.6 M nodes that roads use in
+  10.7 s with 0.64 GB on four cores; Germany's road collection, which took
+  975 s with the node store as it fell out of the page cache, takes 105 s
+  plus 25 s for this pass.
+- Breaking: `IngestStage` has a new variant, `IngestNodeLocations`, for this
+  pass's progress reports.
+
+### Build
+
+- Dependency lower bounds are raised to the versions the code builds with
+  (`serde` 1.0.229, `serde_json` 1.0.154, `tracing` 0.1.44, `tempfile`
+  3.27.0).
+
 ## 0.4.0 (2026-11-19)
 
 ### Change files
