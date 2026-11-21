@@ -24,6 +24,9 @@ pub enum IngestStage {
     IngestPass2Ways,
     /// Pass 2: relations handed to the sink.
     IngestPass2Relations,
+    /// [`locate_nodes`](crate::locate_nodes): the node blobs read for the
+    /// locations of the nodes asked for.
+    IngestNodeLocations,
 }
 
 impl IngestStage {
@@ -36,6 +39,7 @@ impl IngestStage {
             Self::IngestPass2Nodes => "ingest_pass2_nodes",
             Self::IngestPass2Ways => "ingest_pass2_ways",
             Self::IngestPass2Relations => "ingest_pass2_relations",
+            Self::IngestNodeLocations => "ingest_node_locations",
         }
     }
 }

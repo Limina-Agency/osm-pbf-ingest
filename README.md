@@ -116,6 +116,18 @@ of the packed blocks, without looking their nodes up;
 `Pass2Options::keep_ways_where` drops the ways outside it on the decode
 workers, before they get owned tags.
 
+## Ways first: no node store
+
+A caller that needs only some nodes, such as a routing compiler that needs
+the nodes of its road ways, can skip pass 1. Read the ways first with pass 2
+and `Pass2Options::skip_nodes`, collect their node IDs, then call
+`locate_nodes`: it reads the node blobs once and keeps the locations of
+exactly those nodes, in memory and in ID order (16 bytes per node asked for),
+plus the tagged nodes `LocateOptions::keep_nodes` accepts. Each decode worker
+merges its block's nodes against the sorted IDs, so no lookup is random and
+nothing goes to disk; the file need not be sorted. `NodeLocations::get` and
+`cursor` answer as the node store's would for the same file.
+
 ## Filtering by tags
 
 `PrepareOptions::keep_nodes` (pass 1) and `Pass2Options::keep_ways` (pass 2)

@@ -79,6 +79,7 @@
 //! | Module | What it holds |
 //! |---|---|
 //! | `pass1`, `pass2` | the two passes: options, entry points, per-block decoding |
+//! | `locate` | [`locate_nodes`]: the locations of a set of nodes, for a caller that read its ways first |
 //! | `pipeline` | the reader, decode-worker and in-order collector threads both passes run |
 //! | `osm_block` | decoding a `PrimitiveBlock` and walking its nodes, ways and relations |
 //! | `wire` | reading protobuf fields from the wire, for the groups `osm_block` reads that way |
@@ -91,6 +92,7 @@
 mod binary_layout;
 pub mod blob_index;
 pub mod changes;
+mod locate;
 mod model;
 pub mod node_store;
 pub mod object_lookup;
@@ -110,6 +112,9 @@ mod tags;
 mod test_pbf;
 mod wire;
 
+pub use locate::{
+    LocateMetrics, LocateOptions, LocatedNodes, NodeLocations, NodeLocationsCursor, locate_nodes,
+};
 pub use model::{
     NodeBatch, NormalizedNode, NormalizedRelation, NormalizedRelationMember, NormalizedWay,
     RelationBatch, RelationMemberType, WayBatch,
