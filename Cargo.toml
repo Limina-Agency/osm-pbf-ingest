@@ -34,9 +34,9 @@ quick-xml = "0.42"
 rayon = "1.10"
 roaring = "0.11"
 rustc-hash = "2"
-serde = { version = "1.0", features = ["derive", "rc"] }
-serde_json = "1.0"
-tracing = "0.1"
+serde = { version = "1.0.229", features = ["derive", "rc"] }
+serde_json = "1.0.154"
+tracing = "0.1.44"
 zerocopy = { version = "0.8", features = ["derive"] }
 
 [dev-dependencies]
@@ -44,7 +44,7 @@ zerocopy = { version = "0.8", features = ["derive"] }
 # synthetic PBFs in tests and examples.
 osmpbfreader = "0.19"
 protobuf = "3"
-tempfile = "3"
+tempfile = "3.27.0"
 
 [lints.rust]
 dead_code = "warn"
