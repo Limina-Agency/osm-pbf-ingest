@@ -453,3 +453,161 @@ fn relations_keep_their_members_through_a_rewrite() {
         ["r1 n9:label type=boundary", "r2 r1:subarea,w7: ", "r3  "]
     );
 }
+
+fn merge(dir: &Path, files: &[Vec<u8>]) -> (MergeReport, PathBuf) {
+    let paths: Vec<PathBuf> = files
+        .iter()
+        .enumerate()
+        .map(|(index, bytes)| {
+            let path = dir.join(format!("input-{index}.osm.pbf"));
+            std::fs::write(&path, bytes).unwrap();
+            path
+        })
+        .collect();
+    let indexes: Vec<BaseIndex> = paths
+        .iter()
+        .map(|path| BaseIndex::scan(path, false).unwrap())
+        .collect();
+    let inputs: Vec<&BaseIndex> = indexes.iter().collect();
+    let output = dir.join("merged.osm.pbf");
+    let report = merge_files(&inputs, &output, &MergeOptions::default()).unwrap();
+    (report, output)
+}
+
+#[test]
+fn merging_overlapping_extracts_writes_each_object_once_in_order() {
+    let dir = tempfile::tempdir().unwrap();
+    let node = |id, lat, lng, tags| TestNode { id, lat, lng, tags };
+    let west = pbf_file(
+        true,
+        &[
+            node_block(&[node(1, 50.0, 19.0, &[]), node(3, 50.2, 19.2, &[])]),
+            // No other file reaches nodes 20 to 21: copied as it is.
+            node_block(&[node(20, 50.5, 19.5, &[]), node(21, 50.6, 19.6, &[])]),
+            way_block(&[TestWay {
+                id: 100,
+                node_ids: &[1, 3],
+                tags: &[("highway", "track")],
+            }]),
+        ],
+    );
+    let east = pbf_file(
+        true,
+        &[
+            node_block(&[
+                node(2, 50.1, 19.1, &[("amenity", "cafe")]),
+                // The same node as in the west file, where it wins.
+                node(3, 50.2, 19.2, &[("east", "copy")]),
+                node(4, 50.3, 19.3, &[]),
+            ]),
+            way_block(&[
+                TestWay {
+                    id: 100,
+                    node_ids: &[1, 3],
+                    tags: &[("highway", "east-copy")],
+                },
+                TestWay {
+                    id: 101,
+                    node_ids: &[3, 4],
+                    tags: &[],
+                },
+            ]),
+            relation_block(&[TestRelation {
+                id: 500,
+                members: &[TestRelationMember {
+                    member_type: MemberType::WAY,
+                    member_id: 101,
+                    role: "",
+                }],
+                tags: &[("type", "route")],
+            }]),
+        ],
+    );
+    let (report, output) = merge(dir.path(), &[west, east]);
+
+    assert_eq!(
+        objects(&output),
+        [
+            "n1 500000000 190000000 ",
+            "n2 501000000 191000000 amenity=cafe",
+            "n3 502000000 192000000 ",
+            "n4 503000000 193000000 ",
+            "n20 505000000 195000000 ",
+            "n21 506000000 196000000 ",
+            "w100 1,3 highway=track",
+            "w101 3,4 ",
+            "r500 w101: type=route",
+        ]
+    );
+    assert_eq!(report.objects, 9);
+    assert_eq!(report.duplicates, 2);
+    // The block of nodes 20 and 21 and the relation block are copied.
+    assert_eq!(report.blobs_copied, 2);
+    let merged = BaseIndex::scan(&output, false).unwrap();
+    assert!(merged.is_sorted());
+    assert!(merged.header().sorted_type_then_id());
+}
+
+#[test]
+fn merging_a_file_with_itself_gives_its_objects() {
+    let dir = tempfile::tempdir().unwrap();
+    let (report, output) = merge(dir.path(), &[sorted_fixture(), sorted_fixture()]);
+    let original = write_fixture(dir.path(), &sorted_fixture());
+    assert_eq!(objects(&output), objects(&original));
+    assert_eq!(report.duplicates, report.objects);
+}
+
+#[test]
+fn merging_needs_sorted_files() {
+    let dir = tempfile::tempdir().unwrap();
+    let unsorted = pbf_file(
+        false,
+        &[node_block(&[
+            TestNode {
+                id: 2,
+                lat: 50.0,
+                lng: 19.0,
+                tags: &[],
+            },
+            TestNode {
+                id: 1,
+                lat: 50.0,
+                lng: 19.0,
+                tags: &[],
+            },
+        ])],
+    );
+    let path = dir.path().join("unsorted.osm.pbf");
+    std::fs::write(&path, unsorted).unwrap();
+    let index = BaseIndex::scan(&path, false).unwrap();
+    let error = merge_files(
+        &[&index],
+        &dir.path().join("merged.osm.pbf"),
+        &MergeOptions::default(),
+    )
+    .unwrap_err();
+    assert!(error.contains("not sorted"), "{error}");
+    assert!(!dir.path().join("merged.osm.pbf").exists());
+}
+
+#[test]
+fn a_merge_stopped_by_its_progress_callback_leaves_no_output() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = write_fixture(dir.path(), &sorted_fixture());
+    let index = BaseIndex::scan(&path, false).unwrap();
+    let output = dir.path().join("merged.osm.pbf");
+    let mut calls = Vec::new();
+    let error = merge_files_with_progress(
+        &[&index, &index],
+        &output,
+        &MergeOptions::default(),
+        |done, total| {
+            calls.push((done, total));
+            Err("cancelled".to_string())
+        },
+    )
+    .unwrap_err();
+    assert_eq!(error, "cancelled");
+    assert_eq!(calls, [(10, 10)]);
+    assert!(!output.exists());
+}

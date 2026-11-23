@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+### Merging extracts
+
+- New `changes::merge_files` (and `merge_files_with_progress`, which reports
+  blocks read and can stop the merge) writes several PBFs sorted by type then
+  id as one sorted PBF, as `osmium merge` does. Objects the inputs share are
+  written once, from the first input that holds them. Blocks whose id range
+  no other input reaches are copied byte for byte; the others are decoded,
+  merged and written in blocks of 8,000 objects without metadata. The
+  header's box covers every input's; its replication timestamp is the oldest
+  input's, and its sequence number and server are kept only when every input
+  names the same ones. Merging Małopolskie and Pomorskie takes 25 s on 4
+  threads, and a compile of the result gives the same tiles as one of the
+  file `osmium merge` writes. `examples/merge_pbf.rs` runs it.
+
 ## 0.5.0 (2026-11-21)
 
 ### Ways first: no node store
