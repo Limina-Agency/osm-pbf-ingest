@@ -390,7 +390,7 @@ fn chunks_by_kind<'s, 'o>(objects: &'s [&'o OsmObject]) -> Vec<&'s [&'o OsmObjec
 }
 
 /// Every object of a block, owned, in file order.
-fn decode_objects(bytes: &[u8]) -> Result<Vec<OsmObject>, String> {
+pub(super) fn decode_objects(bytes: &[u8]) -> Result<Vec<OsmObject>, String> {
     let block = Block::decode(bytes)?;
     let mut objects = Vec::new();
     let mut pairs = Vec::new();
