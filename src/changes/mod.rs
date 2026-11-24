@@ -61,7 +61,9 @@ mod merge;
 mod osc;
 
 pub use apply::{ApplyOptions, ApplyReport, apply_changes};
-pub use area::{ChangedArea, ChangedBox, changed_area};
+pub use area::{
+    AreaOptions, ChangedArea, ChangedBox, RelationFilter, changed_area, changed_area_with,
+};
 pub use base::BaseIndex;
 pub use merge::{MergeOptions, MergeReport, merge_files, merge_files_with_progress};
 
