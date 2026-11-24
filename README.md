@@ -92,8 +92,9 @@ ways and relations that reach into it, and the nodes of every kept way.
 
 `changed_area` says where a change set changes the map, for a renderer that
 regenerates only those tiles: the box of every changed object before and
-after, of every way whose node moved, and of every multipolygon or boundary
-whose member changed. It reads the base file's way and relation blocks and only
+after, of every way whose node moved, and of every multipolygon whose member
+changed. `changed_area_with` also covers the ways whose relations a renderer
+may reorder when a relation changes. It reads the base file's way and relation blocks and only
 the node blocks holding a node it needs.
 
 ## Merging extracts
