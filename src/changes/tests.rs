@@ -611,3 +611,209 @@ fn a_merge_stopped_by_its_progress_callback_leaves_no_output() {
     assert_eq!(calls, [(10, 10)]);
     assert!(!output.exists());
 }
+
+fn area_of(dir: &Path, base: &[u8], changes: &ChangeSet) -> ChangedArea {
+    let input = write_fixture(dir, base);
+    let index = BaseIndex::scan(&input, false).unwrap();
+    changed_area(&index, changes).unwrap()
+}
+
+/// The boxes as `w s e n` in whole hundredths of a degree, sorted.
+fn boxes(area: &ChangedArea) -> Vec<String> {
+    let mut boxes: Vec<String> = area
+        .boxes
+        .iter()
+        .map(|b| {
+            let r = |v: f64| (v * 100.0).round() as i64;
+            format!("{} {} {} {}", r(b.west), r(b.south), r(b.east), r(b.north))
+        })
+        .collect();
+    boxes.sort();
+    boxes
+}
+
+#[test]
+fn a_moved_node_moves_its_ways_and_areas() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut changes = ChangeSet::new();
+    changes.insert(
+        ChangeAction::Modify,
+        node(4, 2, 510_000_000, 200_000_000, &[]),
+    );
+    let area = area_of(dir.path(), &sorted_fixture(), &changes);
+    assert_eq!((area.ways_moved, area.relations_moved), (1, 1));
+    assert_eq!(area.nodes_missing, 0);
+    assert_eq!(
+        boxes(&area),
+        [
+            // Relation 500 before and after: ways 100 and 101.
+            "1900 5000 1930 5030",
+            "1900 5000 2000 5100",
+            // Way 101 before and after.
+            "1920 5020 1930 5030",
+            "1920 5020 2000 5100",
+            // Node 4 before and after.
+            "1930 5030 1930 5030",
+            "2000 5100 2000 5100",
+        ]
+    );
+}
+
+#[test]
+fn new_and_deleted_objects_have_one_box() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut changes = ChangeSet::new();
+    use ChangeAction::*;
+    changes.insert(Create, node(10, 1, 520_000_000, 210_000_000, &[]));
+    changes.insert(Create, way(102, 1, &[1, 10], &[("highway", "path")]));
+    changes.insert(Delete, way(101, 3, &[], &[]));
+    let area = area_of(dir.path(), &sorted_fixture(), &changes);
+    assert_eq!((area.ways_moved, area.relations_moved), (0, 1));
+    assert_eq!(
+        boxes(&area),
+        [
+            // Relation 500 before (ways 100 and 101) and after (101 is gone).
+            "1900 5000 1920 5020",
+            "1900 5000 1930 5030",
+            // Way 102, from node 1 in the base to the new node 10.
+            "1900 5000 2100 5200",
+            // Way 101, before.
+            "1920 5020 1930 5030",
+            // Node 10.
+            "2100 5200 2100 5200",
+        ]
+    );
+}
+
+#[test]
+fn a_changed_relation_covers_its_members_before_and_after() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut changes = ChangeSet::new();
+    changes.insert(
+        ChangeAction::Modify,
+        relation(
+            500,
+            &[(RelationMemberType::Way, 101, "outer")],
+            &[("type", "multipolygon"), ("landuse", "meadow")],
+        ),
+    );
+    let area = area_of(dir.path(), &sorted_fixture(), &changes);
+    assert_eq!((area.ways_moved, area.relations_moved), (0, 0));
+    assert_eq!(boxes(&area), ["1900 5000 1930 5030", "1920 5020 1930 5030"]);
+}
+
+#[test]
+fn a_deleted_node_leaves_its_way_without_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut changes = ChangeSet::new();
+    changes.insert(ChangeAction::Delete, node(3, 2, 0, 0, &[]));
+    let area = area_of(dir.path(), &sorted_fixture(), &changes);
+    assert_eq!((area.ways_moved, area.relations_moved), (2, 1));
+    assert_eq!(area.nodes_missing, 0);
+    assert!(boxes(&area).contains(&"1930 5030 1930 5030".to_string()));
+    assert!(boxes(&area).contains(&"1900 5000 1910 5010".to_string()));
+}
+
+#[test]
+fn a_changed_indexed_relation_boxes_ways_in_several_ordered_ones() {
+    let node = |id, lat, lng| TestNode {
+        id,
+        lat,
+        lng,
+        tags: &[],
+    };
+    let on_way_100 = [TestRelationMember {
+        member_type: MemberType::WAY,
+        member_id: 100,
+        role: "",
+    }];
+    let route = |id| TestRelation {
+        id,
+        members: &on_way_100,
+        tags: &[("type", "route"), ("route", "hiking")],
+    };
+    let base = pbf_file(
+        true,
+        &[
+            node_block(&[
+                node(1, 50.0, 19.0),
+                node(2, 50.1, 19.1),
+                node(3, 51.0, 20.0),
+                node(4, 51.1, 20.1),
+            ]),
+            way_block(&[
+                TestWay {
+                    id: 100,
+                    node_ids: &[1, 2],
+                    tags: &[],
+                },
+                TestWay {
+                    id: 101,
+                    node_ids: &[3, 4],
+                    tags: &[],
+                },
+            ]),
+            relation_block(&[route(600), route(601)]),
+        ],
+    );
+    let mut changes = ChangeSet::new();
+    changes.insert(
+        ChangeAction::Create,
+        relation(
+            700,
+            &[(RelationMemberType::Way, 101, "")],
+            &[("type", "route"), ("route", "hiking")],
+        ),
+    );
+    let dir = tempfile::tempdir().unwrap();
+    let plain = area_of(dir.path(), &base, &changes);
+    assert_eq!(boxes(&plain), ["2000 5100 2010 5110"]);
+    let index = BaseIndex::scan(&dir.path().join("fixture.osm.pbf"), false).unwrap();
+    let is_route = |tags: &crate::Tags| tags.get("type") == Some("route");
+    let options = AreaOptions {
+        indexed_relations: Some(&is_route),
+        ordered_relations: Some(&is_route),
+    };
+    let area = changed_area_with(&index, &changes, options).unwrap();
+    assert_eq!(area.ways_reordered, 1);
+    assert_eq!(
+        boxes(&area),
+        [
+            "1900 5000 1910 5010",
+            "1900 5000 1910 5010",
+            "2000 5100 2010 5110"
+        ]
+    );
+}
+
+#[test]
+fn a_relation_drawn_along_its_members_is_boxed_member_by_member() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut changes = ChangeSet::new();
+    changes.insert(
+        ChangeAction::Modify,
+        relation(
+            500,
+            &[
+                (RelationMemberType::Way, 100, ""),
+                (RelationMemberType::Way, 101, ""),
+            ],
+            &[("type", "route"), ("route", "hiking")],
+        ),
+    );
+    let area = area_of(dir.path(), &sorted_fixture(), &changes);
+    assert_eq!(
+        boxes(&area),
+        [
+            // Before, a multipolygon: one box.
+            "1900 5000 1930 5030",
+            // After, a route: a box per way.
+            "1900 5000 1920 5020",
+            "1920 5020 1930 5030",
+        ]
+        .into_iter()
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>()
+    );
+}
