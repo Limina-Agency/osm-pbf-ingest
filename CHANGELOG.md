@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+### Where changes reach
+
+- New `changes::changed_area(base, changes)` returns the boxes, in degrees,
+  of every object a change set creates, modifies or deletes, before and
+  after; of every way the set doesn't hold whose node moved; and of every
+  multipolygon or boundary relation whose member changed (`ChangedArea`,
+  `ChangedBox`). A relation's box covers its node and way members. It reads
+  the base file's way and relation blocks, a second pass for a relation's
+  other members, and only the node blocks whose id range holds a node it
+  needs. `osm-tile-compiler update --changed-tiles` turns the boxes into a
+  `z/x/y` list.
+
 ## 0.6.0 (2026-11-23)
 
 ### Merging extracts

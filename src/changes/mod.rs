@@ -55,11 +55,13 @@
 //! For any other file they are appended after the existing objects.
 
 mod apply;
+mod area;
 mod base;
 mod merge;
 mod osc;
 
 pub use apply::{ApplyOptions, ApplyReport, apply_changes};
+pub use area::{ChangedArea, ChangedBox, changed_area};
 pub use base::BaseIndex;
 pub use merge::{MergeOptions, MergeReport, merge_files, merge_files_with_progress};
 

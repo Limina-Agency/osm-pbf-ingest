@@ -611,3 +611,105 @@ fn a_merge_stopped_by_its_progress_callback_leaves_no_output() {
     assert_eq!(calls, [(10, 10)]);
     assert!(!output.exists());
 }
+
+fn area_of(dir: &Path, base: &[u8], changes: &ChangeSet) -> ChangedArea {
+    let input = write_fixture(dir, base);
+    let index = BaseIndex::scan(&input, false).unwrap();
+    changed_area(&index, changes).unwrap()
+}
+
+/// The boxes as `w s e n` in whole hundredths of a degree, sorted.
+fn boxes(area: &ChangedArea) -> Vec<String> {
+    let mut boxes: Vec<String> = area
+        .boxes
+        .iter()
+        .map(|b| {
+            let r = |v: f64| (v * 100.0).round() as i64;
+            format!("{} {} {} {}", r(b.west), r(b.south), r(b.east), r(b.north))
+        })
+        .collect();
+    boxes.sort();
+    boxes
+}
+
+#[test]
+fn a_moved_node_moves_its_ways_and_areas() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut changes = ChangeSet::new();
+    changes.insert(
+        ChangeAction::Modify,
+        node(4, 2, 510_000_000, 200_000_000, &[]),
+    );
+    let area = area_of(dir.path(), &sorted_fixture(), &changes);
+    assert_eq!((area.ways_moved, area.relations_moved), (1, 1));
+    assert_eq!(area.nodes_missing, 0);
+    assert_eq!(
+        boxes(&area),
+        [
+            // Relation 500 before and after: ways 100 and 101.
+            "1900 5000 1930 5030",
+            "1900 5000 2000 5100",
+            // Way 101 before and after.
+            "1920 5020 1930 5030",
+            "1920 5020 2000 5100",
+            // Node 4 before and after.
+            "1930 5030 1930 5030",
+            "2000 5100 2000 5100",
+        ]
+    );
+}
+
+#[test]
+fn new_and_deleted_objects_have_one_box() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut changes = ChangeSet::new();
+    use ChangeAction::*;
+    changes.insert(Create, node(10, 1, 520_000_000, 210_000_000, &[]));
+    changes.insert(Create, way(102, 1, &[1, 10], &[("highway", "path")]));
+    changes.insert(Delete, way(101, 3, &[], &[]));
+    let area = area_of(dir.path(), &sorted_fixture(), &changes);
+    assert_eq!((area.ways_moved, area.relations_moved), (0, 1));
+    assert_eq!(
+        boxes(&area),
+        [
+            // Relation 500 before (ways 100 and 101) and after (101 is gone).
+            "1900 5000 1920 5020",
+            "1900 5000 1930 5030",
+            // Way 102, from node 1 in the base to the new node 10.
+            "1900 5000 2100 5200",
+            // Way 101, before.
+            "1920 5020 1930 5030",
+            // Node 10.
+            "2100 5200 2100 5200",
+        ]
+    );
+}
+
+#[test]
+fn a_changed_relation_covers_its_members_before_and_after() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut changes = ChangeSet::new();
+    changes.insert(
+        ChangeAction::Modify,
+        relation(
+            500,
+            &[(RelationMemberType::Way, 101, "outer")],
+            &[("type", "multipolygon"), ("landuse", "meadow")],
+        ),
+    );
+    let area = area_of(dir.path(), &sorted_fixture(), &changes);
+    assert_eq!((area.ways_moved, area.relations_moved), (0, 0));
+    assert_eq!(boxes(&area), ["1900 5000 1930 5030", "1920 5020 1930 5030"]);
+}
+
+#[test]
+fn a_deleted_node_leaves_its_way_without_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut changes = ChangeSet::new();
+    changes.insert(ChangeAction::Delete, node(3, 2, 0, 0, &[]));
+    let area = area_of(dir.path(), &sorted_fixture(), &changes);
+    assert_eq!((area.ways_moved, area.relations_moved), (2, 1));
+    assert_eq!(area.nodes_missing, 0);
+    assert!(boxes(&area).contains(&"1930 5030 1930 5030".to_string()));
+    assert!(boxes(&area).contains(&"1900 5000 1910 5010".to_string()));
+}

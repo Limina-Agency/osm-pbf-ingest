@@ -90,6 +90,12 @@ the extract: changes to objects it holds, nodes created inside its header box,
 ways and relations that reach into it, and the nodes of every kept way.
 `examples/apply_osc.rs` runs the whole flow.
 
+`changed_area` says where a change set changes the map, for a renderer that
+regenerates only those tiles: the box of every changed object before and
+after, of every way whose node moved, and of every multipolygon or boundary
+whose member changed. It reads the base file's way and relation blocks and only
+the node blocks holding a node it needs.
+
 ## Merging extracts
 
 `changes::merge_files` writes several sorted extracts as one sorted PBF, as
